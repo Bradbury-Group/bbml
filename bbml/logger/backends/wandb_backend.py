@@ -2,7 +2,7 @@ from typing import Any, Iterable, Mapping
 import warnings
 
 from bbml.core.logging import LoggingBackend
-from bbml.logging.utils import (
+from bbml.logger.utils import (
     is_scalar,
     is_dataframe,
     is_image_like,

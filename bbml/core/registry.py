@@ -11,7 +11,7 @@ class Registry(Generic[T]):
         self.registry: dict[str, T] = {}
 
     def __repr__(self) -> str:
-        return f"<Registry {self.name} with keys {list(self.registry.keys())})>"
+        return f"<{self.name}Registry with keys {list(self.registry.keys())})>"
 
     def add(self, key: str, value: T, *, force: bool = False):
         if not force and key in self.registry:

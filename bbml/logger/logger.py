@@ -4,7 +4,7 @@ from bbml.core.logging import AbstractLogger, LoggingBackend
 from bbml.registries import LoggingBackendRegistry
 
 # Import backends to trigger registration
-from bbml.logging import backends  # noqa: F401
+from bbml.logger import backends  # noqa: F401
 
 
 class Logger(AbstractLogger):
@@ -39,13 +39,9 @@ class Logger(AbstractLogger):
         self.backends = []
 
         for s in services:
-            name = (s or "").lower()
-            if name in {"", "none"}:
-                continue
-            
-            backend_class = LoggingBackendRegistry.get(name)
-            if backend_class is None:
+            if backend_class not in LoggingBackendRegistry:
                 raise ValueError(f"Unknown logging service: {s!r}. Available: {list(LoggingBackendRegistry.keys())}")
+            backend_class = LoggingBackendRegistry.get(s)
             
             backend: LoggingBackend = backend_class()
             backend.start(**kwargs)
@@ -88,5 +84,7 @@ class Logger(AbstractLogger):
         self.backends = []
 
 
-# Global instance
-logger = Logger()
+GLOBAL_LOGGER = Logger()
+start = GLOBAL_LOGGER.start
+finish = GLOBAL_LOGGER.finish
+log = GLOBAL_LOGGER.log

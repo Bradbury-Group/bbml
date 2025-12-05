@@ -1,4 +1,4 @@
-from bbml.core import (
+from .core import (
     Trainable,
     Runnable,
     Serializable,
@@ -23,8 +23,8 @@ from bbml.core import (
     fretry,
     texam,
 )
-from bbml.logging import logger
-from bbml.registries import LRSchedulerRegistry, LoggingBackendRegistry, OptimizerRegistry
+from . import logger
+from .registries import LRSchedulerRegistry, LoggingBackendRegistry, OptimizerRegistry
 
 __version__ = "0.1.0"
 
