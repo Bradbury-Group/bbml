@@ -16,16 +16,18 @@ def in_registry(registry) -> Callable:
         return value
     return validate_fn
 
-StepTrigger = Sequence[int]|int|Mapping[Literal["at", "every"],int]
+StepTrigger = int|Sequence[int]|Mapping[Literal["at", "every"],int|Sequence[int]]
 
 class TrainerConfig(BaseModel):
     model_config = ConfigDict(extra="allow")  # meta
 
+    project: str 
     name: str | None = None
     output_dir: Path = Path("checkpoints")
     name_suffix: dict[str, Any]|None = None
-
     logging_backends: Annotated[str | list[str], AfterValidator(in_registry(LoggingBackendRegistry))] | None = None
+    wandb_entity: str | None = None
+
     optimizer: Annotated[str, AfterValidator(in_registry(OptimizerRegistry))] | None = None
     lr_scheduler: Annotated[str, AfterValidator(in_registry(LRSchedulerRegistry))] | None = None
     load_path: str | Path | None = None

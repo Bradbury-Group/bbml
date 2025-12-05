@@ -25,6 +25,9 @@ from .core import (
 )
 from . import logger
 from .registries import LRSchedulerRegistry, LoggingBackendRegistry, OptimizerRegistry
+from .finetuners import LoraFinetuner
+from .train import SimpleTrainer
+from .data import ImageDataTransform, IdentityDataTransform
 
 __version__ = "0.1.0"
 
@@ -56,4 +59,8 @@ __all__ = [
     "LRSchedulerRegistry",
     "LoggingBackendRegistry",
     "OptimizerRegistry",
+    "LoraFinetuner",
+    "SimpleTrainer",
+    "ImageDataTransform",
+    "IdentityDataTransform",
 ]

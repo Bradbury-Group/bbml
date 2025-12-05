@@ -24,8 +24,6 @@ class CombinedDataset(Dataset):
     """
 
     def __init__(self, method: CombineMethods = "zip"):
-        if method not in CombineMethods:
-            raise ValueError(f"method must be {CombineMethods}")
         self.method: CombineMethods = method
         self.datasets: list[Dataset] = []
         # For each dataset we keep an explicit list of indices to use
@@ -196,8 +194,8 @@ class DataPipe(CombinedDataset):
         batch_size: int|None = None,
         shuffle: bool = False,
         num_workers: int|None = None,
-        extra_keys: ExtraKeysStrategy = "ignore",
         method: CombineMethods = "zip",
+        extra_keys: ExtraKeysStrategy = "ignore",
     ):
         super().__init__(method=method)
         self.transforms: dict[str, DataTransform] = {}
@@ -231,7 +229,7 @@ class DataPipe(CombinedDataset):
                     raise ValueError(f"{k=} not in {self.transforms=}")
         
         collated_data = {}
-        for key, list_vals in listed_data:
+        for key, list_vals in listed_data.items():
             if key in self.transforms:
                 collated_data[key] = self.transforms[key].batch_transform(list_vals)
             elif self.extra_keys == ExtraKeysStrategy.ALLOW:

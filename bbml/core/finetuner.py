@@ -17,15 +17,14 @@ class Finetuner(Serializable):
         self.model.save = self.save
         self.original_load = self.model.load
         self.model.load = self.load
-        self.original_train_parameters = self.model.train_parameters
-        self.model.train_parameters = self.train_parameters  # works since self.train_parameters is also a property
+        self.original_get_train_parameters = self.model.get_train_parameters
+        self.model.get_train_parameters = self.get_train_parameters
     
     def remove(self):
         self.model.save = self.original_save
         self.model.load = self.original_load
-        self.model.train_parameters = self.original_train_parameters
+        self.model.get_train_parameters = self.original_get_train_parameters
 
-    @property
     @abstractmethod
-    def train_parameters(self) -> ParamsT:
+    def get_train_parameters(self) -> ParamsT:
         ...

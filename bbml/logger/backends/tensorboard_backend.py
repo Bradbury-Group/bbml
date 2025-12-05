@@ -23,7 +23,7 @@ class TensorBoardBackend(LoggingBackend):
     def start(
         self,
         project: str | None = None,
-        run_name: str | None = None,
+        name: str | None = None,
         tensorboard_log_dir: str | None = None,
         **kwargs: Any,
     ) -> None:
@@ -36,7 +36,7 @@ class TensorBoardBackend(LoggingBackend):
 
         log_dir = tensorboard_log_dir
         if log_dir is None:
-            parts = [p for p in [project, run_name] if p]
+            parts = [p for p in [project, name] if p]
             log_dir = "_".join(parts) if parts else None
         self.writer = SummaryWriter(log_dir=log_dir or None)
 

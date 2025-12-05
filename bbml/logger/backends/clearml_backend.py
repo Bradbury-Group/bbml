@@ -24,10 +24,10 @@ class ClearMLBackend(LoggingBackend):
     def start(
         self,
         project: str | None = None,
-        run_name: str | None = None,
+        name: str | None = None,
         clearml_task_type: str | None = "training",
-        clearml_bucket: str | None = "wand-finetune",
-        tags: Iterable[str] | None = None,
+        clearml_bucket: str | None = None,
+        clearml_credentials_json: str | None = None,
         **kwargs: Any,
     ) -> None:
         from clearml import Task  # lazy import
@@ -35,14 +35,13 @@ class ClearMLBackend(LoggingBackend):
         if clearml_bucket:
             Task.setup_gcp_upload(
                 bucket=clearml_bucket,
-                credentials_json=os.getenv("SERVICE_ACCOUNT_JSON"),
+                credentials_json=clearml_credentials_json,
             )
 
         self.task = Task.init(
             project_name=project or "Default",
-            task_name=run_name or "run",
-            task_type=clearml_task_type or "training",
-            tags=list(tags) if tags else None,
+            task_name=name or "run",
+            task_type=clearml_task_type,
         )
         self.logger = self.task.get_logger()
 

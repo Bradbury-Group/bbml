@@ -13,7 +13,7 @@ from bbml.core.datamodels import TrainerConfig
 from bbml.core.interfaces import Runnable
 from bbml.core.trainer import Trainer
 from bbml import logger
-from bbml.registries import OptimizerRegistry
+from bbml.registries import LRSchedulerRegistry, OptimizerRegistry
 
 
 def init_cls_from_config(cls: type, config: TrainerConfig, *args, **kwargs):
@@ -23,9 +23,26 @@ def init_cls_from_config(cls: type, config: TrainerConfig, *args, **kwargs):
     sig = inspect.signature(cls.__init__)
     
     for param_name in sig.parameters.keys():
-        if hasattr(config, param_name):
+        if hasattr(config, param_name) and param_name not in kwargs:
             kwargs[param_name] = getattr(config, param_name)
+
+    params = list(sig.parameters.values())
+
+    # find positional parameters and pop from kwargs
+    positional_params = [
+        p.name
+        for p in params
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY,
+                      inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        and p.name not in ("self", "cls")
+    ]
+    names_to_pop = positional_params[:len(args)]
+
+    for name in names_to_pop:
+        kwargs.pop(name, None)
     
+    print(f"Initializing {cls!r} with {args=}, {kwargs=}")
+
     return cls(*args, **kwargs)
 
 
@@ -35,7 +52,10 @@ class SimpleTrainer(Trainer):
     
     def train(self):
         if self.train_config.logging_backends is not None:
-            logger.start(self.train_config.logging_backends)
+            logger.start(
+                self.train_config.logging_backends,
+                **self.train_config.model_dump(),
+            )
 
         if self.model.optimizer is not None:
             optimizer_cls = self.model.optimizer
@@ -43,13 +63,13 @@ class SimpleTrainer(Trainer):
             optimizer_cls = OptimizerRegistry.get(self.train_config.optimizer)
         else:
             raise ValueError(f"Optimizer couldn't be initiated from model or config")
-        optimizer = init_cls_from_config(optimizer_cls, self.train_config, self.model.train_parameters)
+        optimizer = init_cls_from_config(optimizer_cls, self.train_config, self.model.get_train_parameters())
         self.optimizer = optimizer
         
         if self.model.lr_scheduler is not None:
             lr_scheduler_cls = self.model.lr_scheduler
         elif self.train_config.lr_scheduler is not None:
-            lr_scheduler_cls = self.train_config.lr_scheduler
+            lr_scheduler_cls = LRSchedulerRegistry.get(self.train_config.lr_scheduler)
         else:
             raise ValueError(f"LRScheduler couldn't be initiated from model or config")
         lr_scheduler = init_cls_from_config(lr_scheduler_cls, self.train_config, optimizer)
@@ -83,8 +103,7 @@ class SimpleTrainer(Trainer):
                     "split": "train",
                 }
                 batch.update(step_info)
-                with torch.autocast(device):
-                    loss = self.model.single_step(batch)
+                loss = self.model.single_step(batch)
                 loss.backward()
                 optimizer.step()
                 lr_scheduler.step()
@@ -95,10 +114,10 @@ class SimpleTrainer(Trainer):
                     **step_info,
                     **learning_rates,
                 }
-                logger.log(log_metrics)
+                logger.log(log_metrics, commit=True)
                 pbar_total.set_postfix(log_metrics)
 
-                self.do_val_test_save()
+                self.do_val_test_save(self.train_config.step)
                 
                 pbar_total.update(1)
                 self.train_config.step += 1
@@ -111,7 +130,7 @@ class SimpleTrainer(Trainer):
         
         val_dataloader = self.val_datapipe.get_loader()
 
-        total_val_loss = torch.tensor(0)
+        all_val_losses = []
         for batch in tqdm(val_dataloader, desc="validation Steps", position=2):
             step_info = {
                 "step": self.train_config.step,
@@ -119,12 +138,13 @@ class SimpleTrainer(Trainer):
             }
             batch.update(step_info)
             loss = self.model.single_step(batch)
-            total_val_loss += loss 
-        val_loss = total_val_loss / len(val_dataloader)  # it's fine if exact inaccuracies due to last batch size happen
+            all_val_losses.append(loss)
+        val_loss = torch.sum(torch.stack(all_val_losses)) / len(val_dataloader)  # it's fine if exact inaccuracies due to last batch size happen
+        val_loss = val_loss.to(device="cpu")
         log_metrics = {
             "validation_loss": val_loss.item(),
         }
-        logger.log(log_metrics)
+        logger.log(log_metrics, commit=False)
         return val_loss
         
     @torch.no_grad()
@@ -134,11 +154,12 @@ class SimpleTrainer(Trainer):
             return None
 
         self.model.eval()
-        test_dataloader = self.val_datapipe.get_loader()
+        test_dataloader = self.test_datapipe.get_loader()
         for batch in tqdm(test_dataloader, desc="Test Steps", position=2):
             test_input = self.model.input_model(**batch)
             output: BaseModel = self.model.run(test_input)
-            logger.log(output.model_dump())
+            logger.log(test_input.model_dump(), commit=False)
+            logger.log(output.model_dump(), commit=False)
         
     def do_val_test_save(self, step: int):
         if self.train_config.check_step_trigger(

@@ -1,5 +1,6 @@
 from typing import Any, Iterable
 
+from bbml.core import fprint, ftimed
 from bbml.core.logging import AbstractLogger, LoggingBackend
 from bbml.registries import LoggingBackendRegistry
 
@@ -22,7 +23,7 @@ class Logger(AbstractLogger):
 
     def __init__(self) -> None:
         self.backends: list[LoggingBackend] = []
-        self.step_fallback: int = 0
+        self.step_fallback: int = 1
 
 
     @property
@@ -39,7 +40,7 @@ class Logger(AbstractLogger):
         self.backends = []
 
         for s in services:
-            if backend_class not in LoggingBackendRegistry:
+            if s not in LoggingBackendRegistry:
                 raise ValueError(f"Unknown logging service: {s!r}. Available: {list(LoggingBackendRegistry.keys())}")
             backend_class = LoggingBackendRegistry.get(s)
             
@@ -64,9 +65,9 @@ class Logger(AbstractLogger):
         if not self.is_active or not data:
             return
 
-        norm_step = self.normalize_step(step, commit=commit)
+        # norm_step = self.normalize_step(step, commit=commit)
         for backend in self.backends:
-            backend.log(data, step=norm_step, commit=commit)
+            backend.log(data, step=step, commit=commit)
 
     def watch_model(self, model: Any, **kwargs: Any) -> None:
         if not self.is_active:

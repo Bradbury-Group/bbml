@@ -19,9 +19,8 @@ class Trainable(ABC):
     def single_step(self, batch: dict[str, Any]) -> Tensor:
         ...
 
-    @property
     @abstractmethod
-    def train_parameters(self) -> ParamsT:
+    def get_train_parameters(self) -> ParamsT:
         ...
 
     @property
@@ -30,25 +29,23 @@ class Trainable(ABC):
         ...
 
     @property
-    @abstractmethod
     def optimizer(self) -> Optimizer | None:
-        ...
+        return None
 
     @property
-    @abstractmethod
     def lr_scheduler(self) -> LRScheduler | None:
-        ...
+        return None
 
 
 class Runnable(ABC):
     @property
     @abstractmethod
-    def input_model(self) -> InT:
+    def input_model(self) -> type[InT]:
         ...
 
     @property
     @abstractmethod
-    def output_model(self) -> OutT:
+    def output_model(self) -> type[OutT]:
         ...
     
     @abstractmethod

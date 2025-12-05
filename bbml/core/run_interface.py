@@ -9,7 +9,7 @@ from bbml.utils.storage import download_url
 
 def parse_run_args():
     parser = argparse.ArgumentParser(description="Run training.")
-    parser.add_argument("-c", "--config", type=str, action="append", help="Add YAML configs to compose (path or URL)")
+    parser.add_argument("-c", "--config", type=str, action="append", required=True, help="Add YAML configs to compose (path or URL)")
     parser.add_argument("--where", choices=["local",], help="Only choice is local (for now)")
     args = parser.parse_args()
 

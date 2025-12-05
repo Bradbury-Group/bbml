@@ -22,9 +22,8 @@ class WandbBackend(LoggingBackend):
     def start(
         self,
         project: str | None = None,
-        entity: str | None = None,
-        run_name: str | None = None,
-        tags: Iterable[str] | None = None,
+        name: str | None = None,
+        wandb_entity: str | None = None,
         config: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -32,11 +31,9 @@ class WandbBackend(LoggingBackend):
 
         self.run = wandb.init(
             project=project,
-            entity=entity,
-            name=run_name,
+            entity=wandb_entity,
+            name=name,
             config=config,
-            tags=list(tags) if tags else None,
-            **kwargs,
         )
 
     def log(self, data: Mapping[str, Any], *, step: int | None = None, commit: bool = True) -> None:

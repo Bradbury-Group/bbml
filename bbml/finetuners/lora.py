@@ -18,7 +18,7 @@ from bbml.core.utils.debug import ftimed
 from bbml.core.finetuner import Finetuner
 
 
-def find_linear_modules_names(
+def _find_linear_modules_names(
     model,
     find_unique=True,
     full_name=False,
@@ -40,6 +40,8 @@ def find_linear_modules_names(
         return layers
 
 def _is_nested_mapping(d: Mapping[str, Any]):
+    if not isinstance(d, Mapping):
+        return False
     return all(isinstance(v,Mapping) for v in d.values())
     
 
@@ -109,9 +111,18 @@ class LoraFinetuner(Finetuner):
         module_names: str | Sequence[str] | None = None,
         module_kwargs: Mapping[str, Mapping[str, Any]]|Mapping[str, Any]| None = None,
         module_configs: Mapping[str, LoraConfig]|LoraConfig|None = None,
-        default_rank: int|None = 16,
+        **kwargs,
     ):
         super().__init__(model)
+
+
+        if _is_nested_mapping(module_kwargs):
+            for k in module_kwargs:
+                module_kwargs[k].update(kwargs)
+        elif isinstance(module_kwargs, Mapping):
+            module_kwargs.update(kwargs)
+        elif module_kwargs is None:
+            module_kwargs = kwargs
 
         module_names, module_kwargs, module_configs = self.apply_defaults(module_names, module_kwargs, module_configs)
 
@@ -141,23 +152,25 @@ class LoraFinetuner(Finetuner):
             elif not _is_nested_mapping(module_kwargs):
                 config_dict[name] = LoraConfig(**module_kwargs)
             else:
-                target_modules = find_linear_modules_names(getattr(self.model, name))
+                target_modules = _find_linear_modules_names(getattr(self.model, name))
                 lora_config = LoraConfig(
-                    r=default_rank,
-                    lora_alpha=default_rank,
-                    init_lora_weights=True,
                     target_modules=target_modules,
                 )
                 config_dict[name] = lora_config
-        for name, m_kwargs in module_kwargs.items():
-            config_dict[name] = LoraConfig(**m_kwargs)
-        config_dict.update(module_configs)
+        if _is_nested_mapping(module_kwargs):
+            for name, m_kwargs in module_kwargs.items():
+                config_dict[name] = LoraConfig(**m_kwargs)
+        if isinstance(module_configs, Mapping):
+            config_dict.update(module_configs)
 
         # final check: named modules exist
         if not all(hasattr(self.model, name) for name in config_dict.keys()):
             missing = [name for name in config_dict.keys() if not hasattr(self.model, name)]
             raise ValueError(f"Passed in module names not present in model({model.__class__}): {missing=}")
         
+        print(f"{config_dict=}")
+
+
         # load peft lora configs
         self.modules = {}
         for name, config in config_dict.items():
@@ -167,9 +180,9 @@ class LoraFinetuner(Finetuner):
 
     def apply_defaults(
         self,
-        module_names: str | Sequence[str] | None = None,
-        module_kwargs: Mapping[str, Mapping[str, Any]]|Mapping[str, Any]| None = None,
-        module_configs: Mapping[str, LoraConfig]|LoraConfig|None = None,
+        module_names: str|Sequence[str]|None,
+        module_kwargs: Mapping[str,Mapping[str,Any]]|Mapping[str,Any]|None,
+        module_configs: Mapping[str,LoraConfig]|LoraConfig|None,
     ):
         """
             Helper function for model-specific finetuners
@@ -205,8 +218,7 @@ class LoraFinetuner(Finetuner):
             save_file(state_dict, str(save_path/f"{name}.safetensors"))
 
 
-    @property
-    def train_parameters(self):
+    def get_train_parameters(self):
         all_params = list(itertools.chain.from_iterable(map(lambda m:m.parameters(), self.modules.values())))
         all_trainable_params = [p for p in all_params if p.requires_grad]
         return [{"params": all_trainable_params},]
