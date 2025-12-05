@@ -117,13 +117,15 @@ class SimpleTrainer(Trainer):
                 logger.log(log_metrics, commit=True)
                 pbar_total.set_postfix(log_metrics)
 
-                self.do_val_test_save(self.train_config.step)
+                self.do_val_test_save()
                 
                 pbar_total.update(1)
                 self.train_config.step += 1
 
             pbar_epoch.close()
         
+        self.do_val_test_save(do_all=True) # do all at end
+
     @torch.no_grad()
     def validate(self):
         self.model.eval()
@@ -161,23 +163,23 @@ class SimpleTrainer(Trainer):
             logger.log(test_input.model_dump(), commit=False)
             logger.log(output.model_dump(), commit=False)
         
-    def do_val_test_save(self, step: int):
+    def do_val_test_save(self, do_all=False):
         if self.train_config.check_step_trigger(
-            step,
+            self.train_config.step,
             self.train_config.validation_step_trigger
-        ):
+        ) or do_all:
             self.validate()
         
         if self.train_config.check_step_trigger(
-            step,
+            self.train_config.step,
             self.train_config.test_step_trigger
-        ):
+        ) or do_all:
             self.test()
         
         if self.train_config.check_step_trigger(
-            step,
+            self.train_config.step,
             self.train_config.save_step_trigger
-        ):
+        ) or do_all:
             self.save(self.train_config.output_dir)
     
 
