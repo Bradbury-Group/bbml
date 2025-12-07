@@ -38,7 +38,7 @@ class CombinedDataset(Dataset):
         self,
         dataset: Dataset,
         index_range: Iterable[int]|tuple[int, int]|None  = None,
-    ) -> "CombinedDataset":
+    ):
         """
         Add a dataset with an optional index range.
 
@@ -206,6 +206,7 @@ class DataPipe(CombinedDataset):
 
     def add_transforms(self, transforms:dict[str, DataTransform]):
         self.transforms.update(transforms)
+        return self  # chain
 
     def get_loader(self) -> DataLoader:
         return DataLoader(
