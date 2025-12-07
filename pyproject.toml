@@ -25,6 +25,7 @@ dependencies = [
     "matplotlib",
     "pandas",
     "tqdm",
+    "tiktoken",
 ]
 
 [tool.setuptools.packages.find]

@@ -16,14 +16,14 @@ from bbml import logger
 from bbml.registries import LRSchedulerRegistry, OptimizerRegistry
 
 
-def init_cls_from_config(cls: type, config: TrainerConfig, *args, **kwargs):
+def init_cls_from_config(cls: type, config: dict, *args, **kwargs):
     """
         Dynamically map config values to class constructor parameters.
     """
     sig = inspect.signature(cls.__init__)
     
     for param_name in sig.parameters.keys():
-        if hasattr(config, param_name) and param_name not in kwargs:
+        if param_name in config and param_name not in kwargs:
             kwargs[param_name] = getattr(config, param_name)
 
     params = list(sig.parameters.values())
@@ -58,21 +58,21 @@ class SimpleTrainer(Trainer):
             )
 
         if self.model.optimizer is not None:
-            optimizer_cls = self.model.optimizer
+            optimizer = self.model.optimizer
         elif self.train_config.optimizer is not None:
             optimizer_cls = OptimizerRegistry.get(self.train_config.optimizer)
+            optimizer = init_cls_from_config(optimizer_cls, self.train_config, self.model.get_train_parameters())
         else:
             raise ValueError(f"Optimizer couldn't be initiated from model or config")
-        optimizer = init_cls_from_config(optimizer_cls, self.train_config, self.model.get_train_parameters())
         self.optimizer = optimizer
         
         if self.model.lr_scheduler is not None:
-            lr_scheduler_cls = self.model.lr_scheduler
+            lr_scheduler = self.model.lr_scheduler
         elif self.train_config.lr_scheduler is not None:
             lr_scheduler_cls = LRSchedulerRegistry.get(self.train_config.lr_scheduler)
+            lr_scheduler = init_cls_from_config(lr_scheduler_cls, self.train_config, optimizer)
         else:
             raise ValueError(f"LRScheduler couldn't be initiated from model or config")
-        lr_scheduler = init_cls_from_config(lr_scheduler_cls, self.train_config, optimizer)
         self.lr_scheduler = lr_scheduler
         
         if self.train_config.load_path is not None:
