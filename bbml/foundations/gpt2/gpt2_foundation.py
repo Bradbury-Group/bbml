@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any
 import warnings
+import random
 
 from safetensors.torch import load_file, save_model
 import torch
@@ -18,18 +19,19 @@ from bbml import logger
 
 
 class GPT2TextDataTransform(DataTransform):
-    def __init__(self):
+    def __init__(self, block_size:int):
         self.tokenizer = tiktoken.get_encoding("gpt2")
+        self.block_size = block_size
 
     def transform(self, inp: str) -> Tensor:
-        random.randint()
-        return torch.tensor(self.tokenizer.encode_ordinary(inp))
+        start_ind = random.randint(0, len(inp)-self.block_size)
+        cropped_inp = inp[start_ind:start_ind+self.block_size]
+        return torch.tensor(self.tokenizer.encode_ordinary(cropped_inp))
     
     def batch_transform(self, inp: list[Tensor]) -> Tensor:
-        try:
-            return torch.stack(inp)
-        except ValueError as e:
-            raise ValueError(f"Batch shapes {[t.shape for t in inp]}") from e  # extra info
+        min_len = min(len(i) for i in inp)
+        cropped_inp = [i[:min_len] for i in inp]
+        return torch.stack(cropped_inp)
     
 
 class GPT2Foundation(Foundation):
@@ -39,7 +41,7 @@ class GPT2Foundation(Foundation):
         if config.from_hf is None:
             self.model = GPT(config)
         else:
-            self.model = self.from_hf(config.from_hf, dict(dropout=config.dropout))
+            self.model = self.from_hf(config.from_hf)
         self.tokenizer = tiktoken.get_encoding("gpt2")
 
     def single_step(self, batch: dict[str, Any]) -> Tensor:
