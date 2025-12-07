@@ -2,8 +2,9 @@
 
 
 
-from bbml import DataPipe, SimpleTrainer, TrainerConfig, run_interface
+from bbml import DataPipe, IdentityDataTransform, SimpleTrainer, TrainerConfig, run_interface
 from bbml.data.datasets import WikiTextDataset
+from bbml.data.transforms import UnsqueezeDataTransform
 from bbml.foundations.gpt2 import GPT2Foundation, GPTConfig
 
 
@@ -31,19 +32,19 @@ def train_fn(cfg_dict: dict):
         shuffle=True,
         num_workers=2,
     ).add_dataset(
-        WikiTextDataset(split="validation")
+        WikiTextDataset(split="validation"), index_range=(0, train_cfg.num_validation_samples)
     ).add_transforms(
         gpt.data_transforms
     )
 
     test_dp = DataPipe(
-        batch_size=None, # single instance
+        batch_size=1,
         shuffle=True,
         num_workers=2,
     ).add_dataset(
-        WikiTextDataset(split="test")
+        WikiTextDataset(split="test"), index_range=(0, train_cfg.num_test_samples)
     ).add_transforms(
-        gpt.data_transforms
+        {"text": UnsqueezeDataTransform()}
     )
 
     trainer = SimpleTrainer(

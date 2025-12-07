@@ -26,6 +26,7 @@ dependencies = [
     "pandas",
     "tqdm",
     "tiktoken",
+    "datasets",
 ]
 
 [tool.setuptools.packages.find]

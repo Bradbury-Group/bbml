@@ -6,177 +6,224 @@ import enum
 from typing import Any, Iterable, Literal, Sequence
 from torch.utils.data import DataLoader, Dataset, Sampler
 
+from bbml.debug import fprint
 from bbml.core.data_transform import DataTransform
 
+
 class CombineMethods(str, enum.Enum):
-    ZIP = "zip"
+    ROUNDROBIN = "roundrobin"
     CONCAT = "concat"
+
 
 class CombinedDataset(Dataset):
     """
     Combine multiple datasets either by:
 
-    - method='zip': items are tuples (d0[i], d1[i], ...);
-      length is the minimum length across datasets (after ranges).
+    - method='roundrobin': get item in order from each dataset
+      length is the ds minimum length * num datasets.
 
     - method='concat': items are taken sequentially from datasets,
       similar to ConcatDataset, but still respecting per-dataset ranges.
     """
 
-    def __init__(self, method: CombineMethods = "zip"):
-        self.method: CombineMethods = method
+    def __init__(self, method: CombineMethods | str = "roundrobin"):
+        if isinstance(method, CombineMethods):
+            self.method: CombineMethods = method
+        else:
+            # allow strings like "roundrobin" / "concat"
+            self.method = CombineMethods(method)
+
+        # Public list of underlying datasets (order matters)
         self.datasets: list[Dataset] = []
-        # For each dataset we keep an explicit list of indices to use
-        self._index_maps: list[list[int]] = []
 
-    # ----- internal helper -----
-    def _add_with_indices(self, dataset: Dataset, indices: Sequence[int]) -> None:
-        self.datasets.append(dataset)
-        self._index_maps.append(list(indices))
+        # For each dataset, a sequence of indices into that dataset that we actually use
+        self._indices_per_dataset: list[Sequence[int]] = []
 
+        # Global mapping from combined index -> (dataset_idx, local_index_in_that_dataset_indices)
+        self._index_mapping: list[tuple[int, int]] = []
+
+    # ------------------------------------------------------------------ #
+    # Internal helpers
+    # ------------------------------------------------------------------ #
+    def _rebuild_index_mapping(self) -> None:
+        """Rebuild the global index -> (dataset_idx, local_index) mapping
+        based on current datasets and index ranges."""
+        self._index_mapping = []
+
+        if not self.datasets:
+            return
+
+        if self.method == CombineMethods.CONCAT:
+            # Just concatenate all indices from each dataset in order
+            for ds_idx, idxs in enumerate(self._indices_per_dataset):
+                for local_i in range(len(idxs)):
+                    self._index_mapping.append((ds_idx, local_i))
+
+        elif self.method == CombineMethods.ROUNDROBIN:
+            num_ds = len(self.datasets)
+            # We can only go up to the minimum length across all datasets
+            min_len = min(len(idxs) for idxs in self._indices_per_dataset)
+            if min_len == 0:
+                return
+
+            # Order: d0[0], d1[0], ..., d_{k-1}[0], d0[1], d1[1], ...
+            for pos in range(min_len):
+                for ds_idx in range(num_ds):
+                    self._index_mapping.append((ds_idx, pos))
+
+        else:
+            raise ValueError(f"Unknown combine method: {self.method!r}")
+
+    def _normalize_index_range(
+        self,
+        dataset: Dataset,
+        index_range: Iterable[int] | tuple[int, int] | None,
+    ) -> Sequence[int]:
+        """Convert index_range into a concrete sequence of indices."""
+        n = len(dataset)
+
+        if index_range is None:
+            return range(n)
+
+        if isinstance(index_range, tuple):
+            if len(index_range) != 2:
+                raise ValueError("tuple index_range must be (start, end)")
+            start, end = index_range
+            if not (0 <= start <= n and 0 <= end <= n):
+                raise ValueError(
+                f"index_range {index_range} is out of bounds for dataset of length {n}"
+                )
+            if end < start:
+                raise ValueError("index_range end must be >= start")
+            return range(start, end)
+
+        # Otherwise, assume it's an arbitrary iterable of indices
+        idxs = list(index_range)
+        for i in idxs:
+            if not (0 <= i < n):
+                raise ValueError(
+                    f"Index {i} in index_range is out of bounds for dataset of length {n}"
+                )
+        return idxs
+
+    # ------------------------------------------------------------------ #
+    # Public API
+    # ------------------------------------------------------------------ #
     def add_dataset(
         self,
         dataset: Dataset,
-        index_range: Iterable[int]|tuple[int, int]|None  = None,
-    ):
+        index_range: Iterable[int] | tuple[int, int] | None = None,
+    ) -> "CombinedDataset":
         """
-        Add a dataset with an optional index range.
+        Add a dataset with an optional index_range specifying which items
+        of that dataset to include.
 
-        index_range:
-          - None: use all indices [0, len(dataset))
-          - (start, stop): use indices [start, stop)
-          - Iterable[int]: arbitrary list of indices
+        - If index_range is None: use all indices [0, len(dataset)).
+        - If index_range is (start, end): use Python range(start, end).
+        - If index_range is an iterable of ints: use those exact indices.
+
+        Returns self to allow chaining.
         """
-        if index_range is None:
-            indices = list(range(len(dataset)))
-        elif isinstance(index_range, tuple) and len(index_range) == 2:
-            start, stop = index_range
-            if not (0 <= start <= stop <= len(dataset)):
-                raise ValueError("Invalid (start, stop) range for dataset")
-            indices = list(range(start, stop))
-        else:
-            # Assume arbitrary iterable of indices
-            indices = list(index_range)
-            for i in indices:
-                if i < 0 or i >= len(dataset):
-                    raise IndexError(
-                        f"Index {i} out of range for dataset of length {len(dataset)}"
-                    )
+        indices = self._normalize_index_range(dataset, index_range)
 
-        self._add_with_indices(dataset, indices)
-        return self  # allow chaining
+        self.datasets.append(dataset)
+        self._indices_per_dataset.append(indices)
+
+        # Rebuild mapping since structure changed
+        self._rebuild_index_mapping()
+        return self
 
     def __len__(self) -> int:
-        if not self.datasets:
-            return 0
+        return len(self._index_mapping)
 
-        if self.method == "zip":
-            # length is limited by the shortest index list
-            return min(len(idxs) for idxs in self._index_maps)
-        else:  # "concat"
-            return sum(len(idxs) for idxs in self._index_maps)
-
-    def __getitem__(self, index):
-        n = len(self)
+    def __getitem__(self, index: int) -> Any:
         if index < 0:
-            index += n
-        if not (0 <= index < n):
-            raise IndexError(index)
+            index += len(self)
+        if not (0 <= index < len(self)):
+            raise IndexError(f"Index {index} out of range for CombinedDataset of length {len(self)}")
 
-        if self.method == "zip":
-            # each dataset uses the index-th element of *its* index list
-            return tuple(
-                ds[idxs[index]] for ds, idxs in zip(self.datasets, self._index_maps)
-            )
-        else:  # "concat"
-            # walk through datasets until we locate the right block
-            for ds, idxs in zip(self.datasets, self._index_maps):
-                if index < len(idxs):
-                    real_idx = idxs[index]
-                    return ds[real_idx]
-                index -= len(idxs)
+        ds_idx, local_i = self._index_mapping[index]
+        dataset = self.datasets[ds_idx]
+        indices = self._indices_per_dataset[ds_idx]
+        item_idx = indices[local_i]
+        return dataset[item_idx]
 
-            # Should never get here
-            raise RuntimeError("Index resolution failed in CombinedDataset")
-
+    # ------------------------------------------------------------------ #
+    # Splitting
+    # ------------------------------------------------------------------ #
     def split(self, *ratios: float) -> list["CombinedDataset"]:
         """
-        Split this CombinedDataset into multiple CombinedDataset instances
-        according to ratios, preserving method ('zip' or 'concat').
+        Split this CombinedDataset into multiple CombinedDatasets according
+        to the provided ratios.
 
-        For method='zip':
-            - we split along the shared 'logical' index axis, and
-              propagate the corresponding slices to each underlying dataset.
+        Example:
+            ds1 = CombinedDataset().add_dataset(...)
+            train_ds, val_ds = ds1.split(0.8, 0.2)
 
-        For method='concat':
-            - we treat the combined dataset like a single long list
-              (with blocks coming from each dataset) and split that list,
-              then derive per-dataset index ranges for each split.
+        The split is done along the *combined* index space (i.e. respecting
+        the global order imposed by the chosen combine method), and then
+        mapped back to per-dataset index ranges. All splits share the same
+        underlying dataset objects, but with different index subsets.
         """
         if not ratios:
-            raise ValueError("At least one ratio must be provided")
-        if any(r < 0 for r in ratios):
-            raise ValueError("Ratios must be non-negative")
+            raise ValueError("At least one ratio must be provided to split().")
 
         total_len = len(self)
         if total_len == 0:
-            # Empty splits, but keep method
+            # Return empty splits with same method
             return [CombinedDataset(self.method) for _ in ratios]
 
         total_ratio = float(sum(ratios))
-        if total_ratio == 0:
-            raise ValueError("Sum of ratios must be > 0")
+        if total_ratio <= 0:
+            raise ValueError("Sum of ratios must be positive.")
 
-        # initial sizes by floor
-        raw_sizes = [total_len * r / total_ratio for r in ratios]
-        sizes = [int(s) for s in raw_sizes]
+        # Compute lengths by proportional allocation, then distribute remainder
+        raw_lengths = [int(total_len * (r / total_ratio)) for r in ratios]
+        used = sum(raw_lengths)
+        remainder = total_len - used
 
-        # distribute leftover examples to the largest fractional parts
-        remainder = total_len - sum(sizes)
-        frac_order = sorted(
-            range(len(ratios)),
-            key=lambda i: raw_sizes[i] - sizes[i],
-            reverse=True,
-        )
-        for i in frac_order[:remainder]:
-            sizes[i] += 1
+        # distribute remaining samples one by one to the first 'remainder' splits
+        for i in range(remainder):
+            raw_lengths[i % len(raw_lengths)] += 1
 
-        # build cumulative boundaries
-        boundaries = [0]
-        acc = 0
-        for s in sizes:
-            acc += s
-            boundaries.append(acc)
-        assert boundaries[-1] == total_len
+        lengths = raw_lengths
 
+        # Prepare per-split, per-dataset index buckets
+        num_splits = len(lengths)
+        num_datasets = len(self.datasets)
+        split_indices: list[list[list[int]]] = [
+            [[ ] for _ in range(num_datasets)] for _ in range(num_splits)
+        ]
+
+        # Precompute boundaries in the combined index space
+        boundaries = []
+        cumsum = 0
+        for L in lengths:
+            cumsum += L
+            boundaries.append(cumsum)  # exclusive upper bound for that split
+
+        # Walk combined indices once and assign each to its split & dataset
+        current_split = 0
+        current_end = boundaries[0]
+        for global_i in range(total_len):
+            while global_i >= current_end and current_split < num_splits - 1:
+                current_split += 1
+                current_end = boundaries[current_split]
+
+            ds_idx, local_i = self._index_mapping[global_i]
+            underlying_indices = self._indices_per_dataset[ds_idx]
+            item_idx = underlying_indices[local_i]
+            split_indices[current_split][ds_idx].append(item_idx)
+
+        # Build new CombinedDataset objects
         splits: list[CombinedDataset] = []
-
-        for split_idx in range(len(ratios)):
-            start = boundaries[split_idx]
-            end = boundaries[split_idx + 1]
-
-            new_cd = CombinedDataset(self.method)
-
-            if self.method == "zip":
-                # same [start:end] slice for each dataset's indices
-                for ds, idxs in zip(self.datasets, self._index_maps):
-                    sub_idxs = idxs[start:end]
-                    new_cd._add_with_indices(ds, sub_idxs)
-            else:  # "concat"
-                # map [start:end) of the *combined* space back to per-dataset blocks
-                seg_start, seg_end = start, end
-                global_pos = 0
-
-                for ds, idxs in zip(self.datasets, self._index_maps):
-                    ds_len = len(idxs)
-                    # overlap of [seg_start, seg_end) with [global_pos, global_pos + ds_len)
-                    local_start = max(0, seg_start - global_pos)
-                    local_end = max(0, min(ds_len, seg_end - global_pos))
-                    if local_start < local_end:
-                        new_cd._add_with_indices(ds, idxs[local_start:local_end])
-                    global_pos += ds_len
-
-            splits.append(new_cd)
+        for s in range(num_splits):
+            new_ds = CombinedDataset(self.method)
+            for ds_idx, base_dataset in enumerate(self.datasets):
+                idxs = split_indices[s][ds_idx]
+                if idxs:
+                    new_ds.add_dataset(base_dataset, idxs)
+            splits.append(new_ds)
 
         return splits
 
@@ -194,7 +241,7 @@ class DataPipe(CombinedDataset):
         batch_size: int|None = None,
         shuffle: bool = False,
         num_workers: int|None = None,
-        method: CombineMethods = "zip",
+        method: CombineMethods = "roundrobin",
         extra_keys: ExtraKeysStrategy = "ignore",
     ):
         super().__init__(method=method)
@@ -217,6 +264,7 @@ class DataPipe(CombinedDataset):
             num_workers=self.num_workers,
         )
 
+    @fprint
     def collate_fn(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
         listed_data = defaultdict(list)
         for data in batch:

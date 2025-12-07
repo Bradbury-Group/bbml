@@ -24,8 +24,9 @@ class GPT2TextDataTransform(DataTransform):
         self.block_size = block_size
 
     def transform(self, inp: str) -> Tensor:
-        start_ind = random.randint(0, len(inp)-self.block_size)
-        cropped_inp = inp[start_ind:start_ind+self.block_size]
+        data_length = self.block_size + 1  # extra 1 for prediction
+        start_ind = random.randint(0, max(0,len(inp)-data_length))
+        cropped_inp = inp[start_ind:start_ind+data_length]
         return torch.tensor(self.tokenizer.encode_ordinary(cropped_inp))
     
     def batch_transform(self, inp: list[Tensor]) -> Tensor:
@@ -43,9 +44,11 @@ class GPT2Foundation(Foundation):
         else:
             self.model = self.from_hf(config.from_hf)
         self.tokenizer = tiktoken.get_encoding("gpt2")
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.dtype = torch.float32
 
     def single_step(self, batch: dict[str, Any]) -> Tensor:
-        toks = batch["text"]  # [B, T]
+        toks = batch["text"].to(device=self.device)  # [B, T]
         batch_size, length = toks.shape
         in_toks = toks[:, :length-1]
         if in_toks.size(1) > self.config.block_size:
@@ -85,7 +88,7 @@ class GPT2Foundation(Foundation):
     
     @property
     def data_transforms(self) -> dict[str, DataTransform]:
-        return {"text": GPT2TextDataTransform()}
+        return {"text": GPT2TextDataTransform(block_size=self.config.block_size)}
 
 
     @property
@@ -104,12 +107,14 @@ class GPT2Foundation(Foundation):
             idx = input.ids
         else:
             idx = self.tokenizer.encode(input.text, allowed_special={"<|endoftext|>"})
+        
+        idx = torch.tensor(idx).unsqueeze(0).to(self.device)
 
         for _ in range(input.max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             # forward the model to get the logits for the index in the sequence
-            logits, _ = self(idx_cond)
+            logits, _ = self.model(idx_cond)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / input.temperature
             # optionally crop the logits to only the top k options

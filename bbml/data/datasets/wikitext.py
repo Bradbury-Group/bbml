@@ -5,6 +5,7 @@ from datasets import load_dataset, Dataset as HFDataset, load_from_disk
 from torch.utils.data import Dataset
 
 from bbml.core.constants import BASE_CACHE_PATH
+from bbml.debug import fprint
 
 
 class WikiTextDataset(Dataset):
@@ -57,5 +58,6 @@ class WikiTextDataset(Dataset):
     def __len__(self) -> int:
         return len(self.ds)
 
+    @fprint
     def __getitem__(self, index: int) -> dict:
         return self.ds[index]
