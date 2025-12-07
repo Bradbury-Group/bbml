@@ -264,7 +264,6 @@ class DataPipe(CombinedDataset):
             num_workers=self.num_workers,
         )
 
-    @fprint
     def collate_fn(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
         listed_data = defaultdict(list)
         for data in batch:

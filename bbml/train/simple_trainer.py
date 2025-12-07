@@ -164,6 +164,7 @@ class SimpleTrainer(Trainer):
             logger.log(output.model_dump(), commit=False)
         
     def do_val_test_save(self, do_all=False):
+        self.model.eval()
         if self.train_config.check_step_trigger(
             self.train_config.step,
             self.train_config.validation_step_trigger
@@ -181,6 +182,7 @@ class SimpleTrainer(Trainer):
             self.train_config.save_step_trigger
         ) or do_all:
             self.save(self.train_config.output_dir)
+        self.model.train()
     
 
     def save(self, save_path: str | Path):

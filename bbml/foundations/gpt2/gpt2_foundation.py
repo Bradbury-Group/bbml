@@ -114,7 +114,7 @@ class GPT2Foundation(Foundation):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             # forward the model to get the logits for the index in the sequence
-            logits, _ = self.model(idx_cond)
+            logits = self.model(idx_cond)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / input.temperature
             # optionally crop the logits to only the top k options
@@ -128,8 +128,9 @@ class GPT2Foundation(Foundation):
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
         
-        text = self.tokenizer.decode(idx)
-        return GPTOutput(text=text, ids=idx)
+        ids = idx.squeeze(0).tolist()
+        text = self.tokenizer.decode(ids)
+        return GPTOutput(text=text, ids=ids)
         
 
     def load(self, load_path):
@@ -147,6 +148,7 @@ class GPT2Foundation(Foundation):
     def save(self, save_path):
         if not isinstance(save_path, Path): 
             save_path = Path(save_path)
+        save_path.mkdir(parents=True, exist_ok=True)
         if not save_path.is_dir():
             raise ValueError(f"Expected {save_path=} to be a directory")
         save_path.mkdir(parents=True, exist_ok=True)

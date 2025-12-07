@@ -58,6 +58,5 @@ class WikiTextDataset(Dataset):
     def __len__(self) -> int:
         return len(self.ds)
 
-    @fprint
     def __getitem__(self, index: int) -> dict:
         return self.ds[index]

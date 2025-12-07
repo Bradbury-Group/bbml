@@ -80,6 +80,8 @@ class WandbBackend(LoggingBackend):
                         )
                 payload[key] = images
                 continue
+            
+            
 
             # fallback: ignore and warn
             warnings.warn(f"Unsupported data type for key {key}: {type(val)} fallback: ignore and warn")

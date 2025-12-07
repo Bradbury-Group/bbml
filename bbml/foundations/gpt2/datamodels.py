@@ -22,7 +22,7 @@ class GPTConfig(FoundationConfig):  # adapted
 class GPTInput(BaseModel):
     text: str|None = None
     ids: list[int]|None = None
-    max_new_tokens: int = 1024
+    max_new_tokens: int = 256
     temperature: float = 1.0
     top_k: int|None = None
 
