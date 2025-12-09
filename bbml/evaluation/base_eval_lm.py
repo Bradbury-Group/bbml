@@ -9,7 +9,8 @@ from torch import Tensor
 from torch.nn import functional as F
 from tqdm import tqdm
 
-from bbml import Foundation, TrainerConfig
+from bbml.core.foundation import Foundation
+from bbml.core.datamodels.configs import TrainerConfig
 
 
 class BaseFoundationLM(TemplateLM):
