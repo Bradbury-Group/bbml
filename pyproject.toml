@@ -27,6 +27,7 @@ dependencies = [
     "tqdm",
     "tiktoken",
     "datasets",
+    "lm_eval[hf]",
 ]
 
 [tool.setuptools.packages.find]

@@ -1,3 +1,4 @@
+from abc import abstractmethod
 from pathlib import Path
 from typing import Any
 import warnings
@@ -33,8 +34,8 @@ class GPT2TextDataTransform(DataTransform):
         min_len = min(len(i) for i in inp)
         cropped_inp = [i[:min_len] for i in inp]
         return torch.stack(cropped_inp)
-    
 
+    
 class GPT2Foundation(Foundation):
 
     def __init__(self, config: GPTConfig, train_config: TrainerConfig | None):
