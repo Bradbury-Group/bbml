@@ -40,6 +40,7 @@ class GPT2Foundation(Foundation):
 
     def __init__(self, config: GPTConfig, train_config: TrainerConfig | None):
         super().__init__(config, train_config)
+        self.config: GPTConfig  # type anno
         if config.from_hf is None:
             self.model = GPT(config)
         else:
@@ -47,6 +48,10 @@ class GPT2Foundation(Foundation):
         self.tokenizer = tiktoken.get_encoding("gpt2")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.dtype = torch.float32
+
+    def forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
+        logits = self.model(input_ids)
+        return logits
 
     def single_step(self, batch: dict[str, Any]) -> Tensor:
         toks = batch["text"].to(device=self.device)  # [B, T]
@@ -56,7 +61,7 @@ class GPT2Foundation(Foundation):
             raise ValueError(f"Input length {in_toks.size(1)} > {self.config.block_size=}")
         out_toks = toks[:, 1:]
 
-        logits = self.model(in_toks)  # [B, T-1, V]
+        logits = self(in_toks)  # [B, T-1, V]
         loss = F.cross_entropy(
             input=rearrange(logits, "B T C -> (B T) C"),
             target=rearrange(out_toks, "B T -> (B T)"),
@@ -106,8 +111,10 @@ class GPT2Foundation(Foundation):
             idx = self.tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})
         elif input.ids is not None:
             idx = input.ids
-        else:
+        elif input.text is not None:
             idx = self.tokenizer.encode(input.text, allowed_special={"<|endoftext|>"})
+        else:
+            idx = self.tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})
         
         idx = torch.tensor(idx).unsqueeze(0).to(self.device)
 
@@ -115,7 +122,7 @@ class GPT2Foundation(Foundation):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             # forward the model to get the logits for the index in the sequence
-            logits = self.model(idx_cond)
+            logits = self(idx_cond)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / input.temperature
             # optionally crop the logits to only the top k options

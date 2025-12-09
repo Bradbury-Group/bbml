@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 from bbml.core.datamodels.configs import FoundationConfig
 
 
@@ -22,7 +22,10 @@ class GPTConfig(FoundationConfig):  # adapted
 class GPTInput(BaseModel):
     text: str|None = None
     ids: list[int]|None = None
-    max_new_tokens: int = 256
+    max_new_tokens: int = Field(
+        default=256,
+        validation_alias=AliasChoices("max_new_tokens", "max_gen_toks"),
+    )
     temperature: float = 1.0
     top_k: int|None = None
 
