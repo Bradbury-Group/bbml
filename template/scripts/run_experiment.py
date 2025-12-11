@@ -13,9 +13,8 @@ from loguru import logger
 from bbml.core.utils import config_compose
 from bbml.core.datamodels.configs import TrainerConfig
 
-from myproject.registries import ExperimentRegistry
+from myproject.experiments.registry import ExperimentRegistry
 from myproject.experiments.base import ExperimentConfig
-import myproject.experiments  # noqa: F401
 
 
 def main() -> None:

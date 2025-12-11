@@ -14,8 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from myproject.registries import ExperimentRegistry
-import myproject.experiments  # noqa: F401
+from myproject.experiments.registry import ExperimentRegistry
 
 
 def main() -> None:

@@ -5,16 +5,14 @@ import torch
 
 class TestExperimentRegistry:
     def test_experiments_registered(self):
-        from myproject.registries import ExperimentRegistry
-        import myproject.experiments  # noqa: F401
+        from myproject.experiments.registry import ExperimentRegistry
 
         assert "example_training" in ExperimentRegistry
         assert "example_compiled" in ExperimentRegistry
         assert "example_analysis" in ExperimentRegistry
 
     def test_registry_get(self):
-        from myproject.registries import ExperimentRegistry
-        import myproject.experiments  # noqa: F401
+        from myproject.experiments.registry import ExperimentRegistry
 
         cls = ExperimentRegistry["example_training"]
         assert cls.__name__ == "ExampleTrainingExperiment"

@@ -16,7 +16,7 @@ from bbml.core.datamodels.configs import TrainerConfig
 from bbml.train.simple_trainer import SimpleTrainer
 
 from myproject.experiments.base import Experiment, ExperimentConfig
-from myproject.registries import ExperimentRegistry
+from myproject.experiments.registry import ExperimentRegistry
 
 
 @ExperimentRegistry.register("my_training")

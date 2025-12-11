@@ -10,5 +10,6 @@ See base.py for the Experiment lifecycle.
 
 from .base import Experiment, ExperimentConfig
 from . import example_experiments  # noqa: F401 - registers experiments
+from .registry import ExperimentRegistry
 
-__all__ = ["Experiment", "ExperimentConfig"]
+__all__ = ["Experiment", "ExperimentConfig", "ExperimentRegistry"]
