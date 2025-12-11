@@ -28,6 +28,7 @@ from .registries import LRSchedulerRegistry, LoggingBackendRegistry, OptimizerRe
 from .finetuners import LoraFinetuner
 from .train import SimpleTrainer
 from .data import ImageDataTransform, IdentityDataTransform
+from .evaluation import BaseFoundationLM
 
 __version__ = "0.1.0"
 
@@ -63,4 +64,5 @@ __all__ = [
     "SimpleTrainer",
     "ImageDataTransform",
     "IdentityDataTransform",
+    "BaseFoundationLM",
 ]

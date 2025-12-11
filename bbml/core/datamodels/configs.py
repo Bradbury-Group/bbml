@@ -57,6 +57,7 @@ class TrainerConfig(BaseModel):
         self.name += suffix_sum
         self.output_dir = self.output_dir.removesuffix("/") # in case
         self.output_dir += suffix_sum
+        return self
     
     @staticmethod
     def check_step_trigger(step: int, trigger: StepTrigger):

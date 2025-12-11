@@ -49,3 +49,11 @@ class IdentityDataTransform(DataTransform):
     
     def batch_transform(self, inp: list) -> list:
         return inp
+
+class UnsqueezeDataTransform(DataTransform):
+    def transform(self, inp: Any) -> Any:
+        return inp
+    
+    def batch_transform(self, inp: list) -> list:
+        assert len(inp) == 1
+        return inp[0]

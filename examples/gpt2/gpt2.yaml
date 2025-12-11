@@ -1,0 +1,37 @@
+# Name
+name: null
+output_dir: "checkpoints"
+project: "gpt2"
+logging_backends: wandb
+
+
+# Training parameters
+train_epochs: 1
+batch_size: 1
+
+optimizer: "AdamW"
+lr: 1.0e-4
+lr_scheduler: "ConstantLR"
+
+lora_rank: 16
+
+offload_text_encoder: false
+
+# Logging
+
+
+num_validation_samples: 32
+num_test_samples: 4
+
+validation_step_trigger:
+  at: [100]
+  every: 500
+test_step_trigger:
+  at: [100]
+  every: 500
+save_step_trigger: 1000
+
+seed: 67
+
+
+wandb_entity: "eleazhong"

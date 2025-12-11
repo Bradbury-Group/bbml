@@ -25,7 +25,7 @@ class Trainable(ABC):
 
     @property
     @abstractmethod
-    def data_transforms(self) -> list[str, DataTransform]:
+    def data_transforms(self) -> dict[str, DataTransform]:
         ...
 
     @property
