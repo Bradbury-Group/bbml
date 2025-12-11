@@ -22,9 +22,9 @@ wheels/
 
 # Virtual environments
 venv/
+.venv/
 ENV/
 env/
-.venv/
 
 # IDE
 .idea/
@@ -40,19 +40,24 @@ htmlcov/
 .tox/
 .nox/
 
+# Linting
+.ruff_cache/
+
 # Outputs
 outputs/
-reports/
-checkpoints/
 logs/
 *.log
 
-# Local tracking (per CLAUDE.md)
-localCHANGELOG.md
-localTODO.md
+# ML artifacts
+wandb/
+checkpoints/
+*.safetensors
+*.pt
+*.pkl
 
 # Secrets
 .env
+keyfile
 *.pem
 credentials.json
 
@@ -62,3 +67,6 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Fonts
+*.ttf
