@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myproject"
+version = "0.1.0"
+description = "ML experiment project built on bbml"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "bbml @ git+https://github.com/Bradbury-Group/bbml.git",
+    "torch>=2.0",
+    "einops",
+    "pydantic>=2.0",
+    "omegaconf",
+    "rich",
+    "loguru",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "ruff",
+    "hypothesis",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["myproject*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --cov=myproject --cov-report=term-missing"
