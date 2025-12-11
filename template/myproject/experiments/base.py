@@ -19,7 +19,7 @@ class ExperimentConfig(BaseModel):
 
 
 class Experiment:
-    """Base experiment. Override what you need.
+    """Example experiment. Rewriting for specific use case is good.
 
     Lifecycle: load -> optimize -> run → report -> cleanup
 

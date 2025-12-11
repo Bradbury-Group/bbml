@@ -5,10 +5,11 @@ Use standard PyTorch Dataset.
 __getitem__() should return a dict with string keys.
 
 Integration with bbml:
-  Create DataPipe: pipe = DataPipe(batch_size=32, shuffle=True)
-   Add dataset: pipe.add_dataset(YourDataset(...))
-   Add transforms: pipe.add_transforms(foundation.data_transforms)
-   Get loader: loader = pipe.get_loader(num_workers=4)
+    Create DataPipe: pipe = DataPipe(batch_size=32, shuffle=True)
+    Add dataset: pipe.add_dataset(YourDataset(...))
+    Add transforms: pipe.add_transforms(foundation.data_transforms)
+    Chainable: pipe.add_dataset(...).add_dataset(...).add_transforms(...)
+    Pass datapipe into trainer
 
 DataPipe.collate_fn() routes each dict key through its DataTransform,
 then calls batch_transform() to stack into batched tensors.
@@ -26,12 +27,7 @@ class MyDataset(Dataset):
     Keys should match Foundation.data_transforms keys.
     """
 
-    def __init__(self, split: str = "train"):
-        """
-        Args:
-            split: "train", "val", or "test"
-        """
-        self.split = split
+    def __init__(self):
         raise NotImplementedError
 
     def __len__(self) -> int:
@@ -39,7 +35,6 @@ class MyDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         """
-
         Keys become batch dict keys after DataPipe collation.
         Must match keys in Foundation.data_transforms.
 

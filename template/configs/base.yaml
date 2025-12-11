@@ -22,6 +22,9 @@ weight_decay: 0.01
 lr_scheduler: CosineAnnealingLR
 
 # Checkpointing
+# can be integer step number, list of steps, or dict of {at: int or list, every: int}
 save_step_trigger: 1000
+test_step_trigger: 500
 validation_step_trigger:
+  at: [100, 250]
   every: 500
