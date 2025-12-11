@@ -8,7 +8,7 @@ See example_experiments.py for templates.
 See base.py for the Experiment lifecycle.
 """
 
-from myproject.experiments.base import Experiment, ExperimentConfig
-from myproject.experiments import example_experiments  # noqa: F401 - registers experiments
+from .base import Experiment, ExperimentConfig
+from . import example_experiments  # noqa: F401 - registers experiments
 
 __all__ = ["Experiment", "ExperimentConfig"]

@@ -18,10 +18,6 @@ from bbml.train.simple_trainer import SimpleTrainer
 from myproject.experiments.base import Experiment, ExperimentConfig
 from myproject.registries import ExperimentRegistry
 
-# Import your Foundation, Dataset, etc:
-# from myproject.foundations.example_foundation import MyFoundation, MyFoundationConfig
-# from myproject.data.datasets import MyDataset
-
 
 @ExperimentRegistry.register("my_training")
 class MyTrainingExperiment(Experiment):
@@ -92,15 +88,15 @@ class MyAnalysisExperiment(Experiment):
         raise NotImplementedError
 
     def run_once(self, iteration: int = 0) -> dict:
-        """Single iteration. Return results dict.
+        """
+        Single iteration. Return results dict.
 
         Called config.iterations times by base run().
         """
         raise NotImplementedError
 
     def report(self) -> None:
-        """Save aggregated results.
-
-        See myproject/reporting/ for Measurement datamodel and save_measurements().
+        """
+        Save aggregated results.
         """
         raise NotImplementedError

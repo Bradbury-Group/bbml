@@ -71,7 +71,3 @@ sed -i "s/$OLD_NAME/$NEW_NAME/g" README.md
 echo ""
 echo "Done! Project renamed to '$NEW_NAME'"
 echo ""
-echo "Next steps:"
-echo "  1. pip install -e '.[dev]'"
-echo "  2. python scripts/list_experiments.py"
-echo "  3. python scripts/run_experiment.py --name example_baseline -c configs/base.yaml"

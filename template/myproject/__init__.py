@@ -1,3 +1,3 @@
-from myproject.registries import ExperimentRegistry
+from .registries import ExperimentRegistry
 
 __all__ = ["ExperimentRegistry"]
