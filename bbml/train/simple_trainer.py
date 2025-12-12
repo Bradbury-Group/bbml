@@ -41,8 +41,6 @@ def init_cls_from_config(cls: type, config: dict, *args, **kwargs):
     for name in names_to_pop:
         kwargs.pop(name, None)
     
-    print(f"Initializing {cls!r} with {args=}, {kwargs=}")
-
     return cls(*args, **kwargs)
 
 
@@ -78,7 +76,9 @@ class SimpleTrainer(Trainer):
         if self.train_config.load_path is not None:
             self.load(self.train_config.load_path)
 
-        device = "cuda:0"
+        device = getattr(self.train_config, "device", None)
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model.train()
         self.model.to(device=device)
         
@@ -129,7 +129,7 @@ class SimpleTrainer(Trainer):
     @torch.no_grad()
     def validate(self):
         if self.val_datapipe is None:
-            warnings.warn(f"Validation Datatpipe not provided, skipping")
+            warnings.warn("Validation DataPipe not provided, skipping")
             return torch.tensor(0)
         self.model.eval()
         
@@ -158,7 +158,7 @@ class SimpleTrainer(Trainer):
             warnings.warn(f"Model {self.model!r} is not runnable, testing via `run()` is not available.")
             return
         if self.test_datapipe is None:
-            warnings.warn(f"Testing Datatpipe not provided, skipping")
+            warnings.warn("Testing DataPipe not provided, skipping")
             return 
 
         self.model.eval()
@@ -203,7 +203,7 @@ class SimpleTrainer(Trainer):
         self.model.save(save_path)
         optim_path = Path(save_path) / "optimizer.pt"
         torch.save(self.optimizer.state_dict(), optim_path)
-        lrs_path = Path(save_path) / "optimizer.pt"
+        lrs_path = Path(save_path) / "lr_scheduler.pt"
         torch.save(self.lr_scheduler.state_dict(), lrs_path)
         
 
@@ -211,8 +211,8 @@ class SimpleTrainer(Trainer):
         self.model.load(load_path)
         optim_path = Path(load_path) / "optimizer.pt"
         if optim_path.exists():
-            self.optimizer.load_state_dict(torch.load(optim_path))
+            self.optimizer.load_state_dict(torch.load(optim_path, weights_only=True))
         lrs_path = Path(load_path) / "lr_scheduler.pt"
         if lrs_path.exists():
-            self.lr_scheduler.load_state_dict(torch.load(lrs_path))
+            self.lr_scheduler.load_state_dict(torch.load(lrs_path, weights_only=True))
 

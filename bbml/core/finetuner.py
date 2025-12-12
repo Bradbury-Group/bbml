@@ -28,3 +28,11 @@ class Finetuner(Serializable):
     @abstractmethod
     def get_train_parameters(self) -> ParamsT:
         ...
+
+    @abstractmethod
+    def save(self, save_path: str | Path):
+        ...
+
+    @abstractmethod
+    def load(self, load_path: str | Path):
+        ...

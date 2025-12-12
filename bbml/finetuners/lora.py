@@ -67,7 +67,7 @@ def _remove_duplicate_layers(state_dict):
     updated_state_dict = {}
     for k, v in state_dict.items():
         newk: str = k
-        while k.startswith("base_model.model.base_model.model."):
+        while newk.startswith("base_model.model.base_model.model."):
             newk = newk.removeprefix("base_model.model.")
         updated_state_dict[newk] = v
     return updated_state_dict
@@ -127,7 +127,7 @@ class LoraFinetuner(Finetuner):
         module_names, module_kwargs, module_configs = self.apply_defaults(module_names, module_kwargs, module_configs)
 
         if module_names is None and module_kwargs is None and module_configs is None:
-            raise ValueError("Attempted initializing LoraFinetuner with module targets or configs")
+            raise ValueError("Attempted initializing LoraFinetuner with no module targets or configs")
         
         if not _is_nested_mapping(module_kwargs) and isinstance(module_configs, LoraConfig):
             warnings.warn("Using both singular module_kwargs and module_configs, module_kwargs will be ignored")
@@ -168,9 +168,6 @@ class LoraFinetuner(Finetuner):
             missing = [name for name in config_dict.keys() if not hasattr(self.model, name)]
             raise ValueError(f"Passed in module names not present in model({model.__class__}): {missing=}")
         
-        print(f"{config_dict=}")
-
-
         # load peft lora configs
         self.modules = {}
         for name, config in config_dict.items():
@@ -197,8 +194,9 @@ class LoraFinetuner(Finetuner):
         """
         load_path = Path(load_path)
         print(f"Loading Lora from {load_path}")
+        device = getattr(self.model, "device", None)
         for name, module in self.modules.items():
-            peft_weights = load_file(str(load_path/f"{name}.safetensors"), self.device)            
+            peft_weights = load_file(str(load_path/f"{name}.safetensors"), device=device)            
             keys_warning = set_peft_model_state_dict(module, peft_weights)
             print(f"{keys_warning=}")
 

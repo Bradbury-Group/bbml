@@ -48,15 +48,15 @@ class TrainerConfig(BaseModel):
         if self.name is None:
             self.name = ""
         if self.name_suffix is None:
-            return
+            return self
         suffix_sum = ""
-        for suf_name,suf_val in self.name_suffix.items():
+        for suf_name, suf_val in self.name_suffix.items():
             suffix_sum += "_" + suf_name
             suf_val = str(suf_val)
             suffix_sum += "_" + suf_val
         self.name += suffix_sum
-        self.output_dir = self.output_dir.removesuffix("/") # in case
-        self.output_dir += suffix_sum
+        output_dir_str = str(self.output_dir).removesuffix("/")
+        self.output_dir = Path(output_dir_str + suffix_sum)
         return self
     
     @staticmethod

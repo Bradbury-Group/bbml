@@ -19,7 +19,7 @@ def parse_run_args():
             if config_path_or_url.startswith("http"):
                 config_stem = config_path_or_url.split("/")[-1].split(".")[0]
                 local_path = Path("/tmp") / f"{config_stem}_{str(uuid.uuid4())[:8]}.yaml"
-                download_url(args.config, local_path)
+                download_url(config_path_or_url, local_path)
                 updated_config_paths.append(local_path)
             else:
                 updated_config_paths.append(config_path_or_url)
@@ -28,7 +28,7 @@ def parse_run_args():
     return args
 
 
-def run_interface(run_func: Callable[dict, Any]):
+def run_interface(run_func: Callable[[dict], Any]):
     args = parse_run_args()
     composed_config = config_compose(args.config)
     run_func(composed_config)
