@@ -14,24 +14,25 @@ Registration: @ExperimentRegistry.register("name")
 CLI: python scripts/run_experiment.py --name <name> -c configs/base.yaml
 """
 
+import gc
 import json
 from typing import override
-from pydantic import BaseModel
+
 import torch
-from torch.utils.data import Dataset
 from bbml import (
-    Foundation,
-    FoundationConfig,
+    DataPipe,
+    SimpleTrainer,
     Trainer,
     TrainerConfig,
-    SimpleTrainer,
-    DataPipe,
-    Finetuner,
 )
 from bbml.utils.serialize import deep_serialize_pydantic
 
+from myproject.data.datasets import MyDataset
+from myproject.datamodels import MyFoundationConfig
 from myproject.experiments.base import Experiment
 from myproject.experiments.registry import ExperimentRegistry
+from myproject.finetuner import MyFinetuner
+from myproject.foundation import MyFoundation
 
 
 @ExperimentRegistry.register
@@ -45,20 +46,20 @@ class MyTrainingExperiment(Experiment):
     5. Get samples and validation via trainer.test() and trainer.validate() 
     """
     def load(self):
-        self.foundation: Foundation = Foundation(
-            config=FoundationConfig(...),
+        self.foundation: MyFoundation = MyFoundation(
+            config=MyFoundationConfig(...),
             train_config=TrainerConfig(...),
         )
         self.foundation.to("cuda" if torch.cuda.is_available() else "cpu")
         
-        datapipe = DataPipe(batch_size=self.trainer_config.batch_size, shuffle=True)
-        datapipe.add_dataset(Dataset(...))
+        datapipe = DataPipe(batch_size=self.foundation.trainer_config.batch_size, shuffle=True)
+        datapipe.add_dataset(MyDataset(...))
         datapipe.add_transforms(self.foundation.data_transforms)
         val_datapipe, train_pipe = datapipe.split(10, 90)
         
         self.trainer: Trainer = SimpleTrainer(
             model=self.foundation,
-            train_config=self.trainer_config,
+            train_config=self.foundation.trainer_config,
             train_datapipe=train_pipe,
             val_datapipe=val_datapipe,
         )
@@ -84,6 +85,11 @@ class MyTrainingExperiment(Experiment):
         with open(results_dir/f"report.json", "w") as f:
             json.dump(serialized_results, f, default=str)
 
+    def cleanup(self):
+        self.foundation.to("cpu")
+        del self.foundation
+        gc.collect()
+        
 
 @ExperimentRegistry.register
 class MyFinetunedTrainingExperiment(MyTrainingExperiment):
@@ -92,10 +98,13 @@ class MyFinetunedTrainingExperiment(MyTrainingExperiment):
     """
     def load(self):
         super().load()
-        self.finetuner: Finetuner = Finetuner(self.foundation)  # loads at initialization
+        self.finetuner: MyFinetuner = MyFinetuner(self.foundation)  # loads at initialization
 
     def cleanup(self):
         self.finetuner.remove()
+        super().cleanup()
+        del self.finetuner
+        gc.collect()
         
 
 @ExperimentRegistry.register
@@ -108,12 +117,12 @@ class MyAnalysisExperiment(Experiment):
     """
 
     def load(self):
-        self.foundation: Foundation = Foundation(
-            config=FoundationConfig(...),
+        self.foundation: MyFoundation = MyFoundation(
+            config=MyFoundationConfig(...),
             train_config=None,
         )
         self.foundation.to("cuda" if torch.cuda.is_available() else "cpu")
-        self.data: Dataset = Dataset(...)
+        self.data: MyDataset = MyDataset(...)
         
 
     def run_once(self, iteration: int = 0) -> dict:
@@ -129,3 +138,8 @@ class MyAnalysisExperiment(Experiment):
         results_dir.mkdir(exist_ok=True)
         with open(results_dir/"report.json", "w") as f:
             json.dump(serialized_results, f, default=str)
+
+    def cleanup(self):
+        self.foundation.to("cpu")
+        del self.foundation
+        gc.collect()

@@ -18,7 +18,7 @@ from torch import Tensor
 from torch.optim.optimizer import ParamsT
 
 from bbml import Foundation, FoundationConfig, TrainerConfig, DataTransform
-from template.myproject.datamodels import MyFoundationConfig, MyInput, MyOutput
+from myproject.datamodels import MyFoundationConfig, MyInput, MyOutput
 
 
 class MyDataTransform(DataTransform):

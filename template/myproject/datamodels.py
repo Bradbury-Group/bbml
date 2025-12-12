@@ -1,4 +1,9 @@
 
+from pydantic import BaseModel
+
+from bbml import FoundationConfig
+
+
 class MyFoundationConfig(FoundationConfig):
     """Loaded from configs/*.yaml."""
 

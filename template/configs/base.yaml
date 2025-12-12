@@ -1,5 +1,5 @@
 # Base configuration - shared defaults
-# Override via: -c configs/base.yaml -c configs/experiments/my_exp.yaml
+# Override via: -c configs/base.yaml -c configs/training/my_exp.yaml
 
 project: myproject
 output_dir: outputs

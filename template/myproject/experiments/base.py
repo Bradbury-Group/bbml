@@ -11,11 +11,9 @@ class MetaExperimentConfig(BaseModel):
     """
     Meta config for experiment classes: shared config between experiments
     """
-
     report_dir: Path = Path("reports")
     seed: int = 42
     iterations: int = 1
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class Experiment(ABC):
@@ -29,7 +27,7 @@ class Experiment(ABC):
 
     def __init__(self, name: str):
         self.meta_config.report_dir.mkdir(parents=True, exist_ok=True)
-        if self.name is None:
+        if name is None:
             raise ValueError("Please set a name for experiment")
         self.name = name
 
@@ -38,6 +36,11 @@ class Experiment(ABC):
     @classmethod
     def set_meta(cls, meta_config: MetaExperimentConfig):
         cls.meta_config = meta_config
+    
+    @classmethod
+    def update_meta(cls, **kwargs):
+        for k, v in kwargs.items():
+            setattr(cls.meta_config, k, v) 
 
     def run(self) -> Any|list[Any]:
         """Main computation. Default: loop over run_once() for config.iterations."""
