@@ -128,6 +128,9 @@ class SimpleTrainer(Trainer):
 
     @torch.no_grad()
     def validate(self):
+        if self.val_datapipe is None:
+            warnings.warn(f"Validation Datatpipe not provided, skipping")
+            return torch.tensor(0)
         self.model.eval()
         
         val_dataloader = self.val_datapipe.get_loader()
@@ -153,15 +156,26 @@ class SimpleTrainer(Trainer):
     def test(self):
         if not isinstance(self.model, Runnable):
             warnings.warn(f"Model {self.model!r} is not runnable, testing via `run()` is not available.")
-            return None
+            return
+        if self.test_datapipe is None:
+            warnings.warn(f"Testing Datatpipe not provided, skipping")
+            return 
 
         self.model.eval()
         test_dataloader = self.test_datapipe.get_loader()
+        testing_samples = []
         for batch in tqdm(test_dataloader, desc="Test Steps", position=2):
             test_input = self.model.input_model(**batch)
             output: BaseModel = self.model.run(test_input)
             logger.log(test_input.model_dump(), commit=False)
             logger.log(output.model_dump(), commit=False)
+
+            testing_samples.append({
+                "input": test_input,
+                "output": output,
+            })
+        
+        return testing_samples
         
     def do_val_test_save(self, do_all=False):
         self.model.eval()

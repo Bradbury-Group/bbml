@@ -3,31 +3,13 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bbml"
+name = "myproject"
 version = "0.1.0"
+description = "ML experiment project built on bbml"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "torch",
-    "torchvision",
-    "accelerate",
-    "einops",
-    "pillow",
-    "safetensors",
-    "transformers",
-    "diffusers",
-    "numpy",
-    "pydantic",
-    "peft",
-    "wandb",
-    "python-dotenv",
-    "torchao",
-    "PyYAML",
-    "matplotlib",
-    "pandas",
-    "tqdm",
-    "tiktoken",
-    "datasets",
-    "lm_eval[hf]",
+    "bbml @ git+https://github.com/Bradbury-Group/bbml.git",
 ]
 
 [project.optional-dependencies]
@@ -39,7 +21,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["bbml*"]
+include = ["myproject*"]
 namespaces = true
 
 [tool.ruff]
@@ -52,4 +34,4 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --cov=bbml --cov-report=term-missing"
+addopts = "-v --cov=myproject --cov-report=term-missing"

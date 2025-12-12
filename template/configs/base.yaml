@@ -1,0 +1,30 @@
+# Base configuration - shared defaults
+# Override via: -c configs/base.yaml -c configs/training/my_exp.yaml
+
+project: myproject
+output_dir: outputs
+seed: 42
+
+# Logging (registered in bbml.registries.LoggingBackendRegistry)
+logging_backends:
+  - wandb
+
+# Training
+batch_size: 32
+train_epochs: 10
+
+# Optimizer (registered in bbml.registries.OptimizerRegistry)
+optimizer: AdamW
+learning_rate: 1.0e-4
+weight_decay: 0.01
+
+# LR Scheduler (registered in bbml.registries.LRSchedulerRegistry)
+lr_scheduler: CosineAnnealingLR
+
+# Checkpointing
+# can be integer step number, list of steps, or dict of {at: int or list, every: int}
+save_step_trigger: 1000
+test_step_trigger: 500
+validation_step_trigger:
+  at: [100, 250]
+  every: 500
