@@ -4,8 +4,7 @@ from pathlib import Path
 
 from torch.optim.optimizer import ParamsT
 
-from bbml.core.finetuner import Finetuner
-from bbml.core.foundation import Foundation
+from bbml import Finetuner, Foundation
 
 
 class MyFinetuner(Finetuner):

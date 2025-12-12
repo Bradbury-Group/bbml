@@ -1,6 +1,5 @@
-# Example training experiment
-experiment:
-  report_dir: reports/example_training
+name_suffix:
+  experiment: example
 
 input_dim: 784
 hidden_dim: 256

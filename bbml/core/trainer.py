@@ -2,6 +2,9 @@
 
 
 from abc import ABC, abstractmethod
+from typing import Any
+
+from torch import Tensor
 from bbml.core.interfaces import Serializable, Trainable
 from bbml.core.datapipe import DataPipe
 from bbml.core.datamodels.configs import TrainerConfig
@@ -29,10 +32,10 @@ class Trainer(Serializable):
         ...
 
     @abstractmethod
-    def validate(self):
+    def validate(self) -> Tensor:
         ...
     
     @abstractmethod
-    def test(self):
+    def test(self) -> Any:
         ...
     

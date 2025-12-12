@@ -8,8 +8,8 @@ See example_experiments.py for templates.
 See base.py for the Experiment lifecycle.
 """
 
-from .base import Experiment, ExperimentConfig
+from .base import Experiment, MetaExperimentConfig
 from . import example_experiments  # noqa: F401 - registers experiments
 from .registry import ExperimentRegistry
 
-__all__ = ["Experiment", "ExperimentConfig", "ExperimentRegistry"]
+__all__ = ["Experiment", "MetaExperimentConfig", "ExperimentRegistry"]

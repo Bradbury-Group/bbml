@@ -1,65 +1,77 @@
-"""Experiment lifecycle: load → optimize → run → report → cleanup."""
+"""Experiment lifecycle: load → run → report → cleanup."""
 
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class ExperimentConfig(BaseModel):
-    """Experiment metadata."""
+class MetaExperimentConfig(BaseModel):
+    """
+    Meta config for experiment classes: shared config between experiments
+    """
 
-    name: str
     report_dir: Path = Path("reports")
     seed: int = 42
-    iterations: int = 1  # For benchmarking/sweep experiments
+    iterations: int = 1
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    model_config = {"extra": "allow"}
 
+class Experiment(ABC):
+    """Example experiment.
 
-class Experiment:
-    """Example experiment. Rewriting for specific use case is good.
-
-    Lifecycle: load -> optimize -> run → report -> cleanup
+    Lifecycle: load -> run → report -> cleanup
 
     For iteration-based experiments (benchmarks, sweeps), override run_once()
     and let run() handle the loop. For single-run experiments, override run().
     """
 
-    def __init__(self, config: ExperimentConfig):
-        self.config = config
-        self.config.report_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, name: str):
+        self.meta_config.report_dir.mkdir(parents=True, exist_ok=True)
+        if self.name is None:
+            raise ValueError("Please set a name for experiment")
+        self.name = name
 
-    def load(self) -> None:
+    meta_config: MetaExperimentConfig = MetaExperimentConfig()
+    
+    @classmethod
+    def set_meta(cls, meta_config: MetaExperimentConfig):
+        cls.meta_config = meta_config
+
+    def run(self) -> Any|list[Any]:
+        """Main computation. Default: loop over run_once() for config.iterations."""
+        results_list = []
+        for i in range(self.meta_config.iterations):
+            results = self.run_once(iteration=i)
+            results_list.append(results)
+        return results_list
+
+    def run_all(self):
+        """Execute: load -> run -> report -> cleanup."""
+        self.load()
+        run_results = self.run()
+        self.report(run_results)
+        self.cleanup()
+    
+
+    # Below are abstract methods to be implmemented
+    @abstractmethod
+    def load(self):
         """Load data, models, etc."""
-        pass
+        ...
 
-    def optimize(self) -> None:
-        """Apply optimizations (torch.compile, quantization, etc.)."""
-        pass
-
+    @abstractmethod
     def run_once(self, iteration: int = 0) -> Any:
         """Single iteration. Override for benchmarks/sweeps."""
-        pass
+        ...
 
-    def run(self) -> None:
-        """Main computation. Default: loop over run_once() for config.iterations."""
-        for i in range(self.config.iterations):
-            self.run_once(iteration=i)
-
-    def report(self) -> None:
+    @abstractmethod
+    def report(self, results: Any|list[Any]):
         """Save results."""
-        pass
+        ...
 
-    def cleanup(self) -> None:
+    @abstractmethod
+    def cleanup(self):
         """Release resources."""
-        pass
-
-    def run_all(self) -> None:
-        """Execute: load -> optimize -> run -> report -> cleanup."""
-        self.load()
-        self.optimize()
-        self.run()
-        self.report()
-        self.cleanup()
+        ...

@@ -14,7 +14,7 @@ from typing import Any
 
 from torch import Tensor
 
-from bbml.core.data_transform import DataTransform
+from bbml import DataTransform
 
 
 class MyTransform(DataTransform):

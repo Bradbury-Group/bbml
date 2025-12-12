@@ -17,42 +17,16 @@ from pydantic import BaseModel
 from torch import Tensor
 from torch.optim.optimizer import ParamsT
 
-from bbml.core.foundation import Foundation
-from bbml.core.datamodels.configs import FoundationConfig, TrainerConfig
-from bbml.core.data_transform import DataTransform
+from bbml import Foundation, FoundationConfig, TrainerConfig, DataTransform
+from template.myproject.datamodels import MyFoundationConfig, MyInput, MyOutput
 
-
-# === CONFIG ===
-# extra="allow" is inherited - arbitrary YAML fields pass through.
-
-class MyFoundationConfig(FoundationConfig):
-    """Loaded from configs/*.yaml."""
-
-    hidden_dim: int = 256
-    num_layers: int = 4
-    # Extend
-
-
-# === I/O MODELS ===
-# Pydantic models for run() input/output. Used for validation and API schemas.
-
-class MyInput(BaseModel):
-    """Input schema for run(). Define what inference accepts."""
-    pass  # e.g., text: str, image: list[float], etc.
-
-
-class MyOutput(BaseModel):
-    """Output schema for run(). Define what inference returns."""
-    pass  # e.g., logits: list[float], label: str, etc.
-
-
-# === DATA TRANSFORMS ===
-# DataTransform converts raw dataset items -> tensors, then batches them.
-# Foundation.data_transforms returns dict[str, DataTransform] keyed by dataset field.
-# DataPipe calls transform() per-item, then batch_transform() to collate.
 
 class MyDataTransform(DataTransform):
-    """Transform for one field of your dataset (e.g., 'features', 'text')."""
+    """
+    DataTransform converts raw dataset items -> tensors, then batches them.
+    Foundation.data_transforms returns dict[str, DataTransform] keyed by dataset field.
+    DataPipe calls transform() per-item, then batch_transform() to collate.
+    """
 
     def transform(self, input: dict[str, Any]) -> Tensor:
         # input = one item from dataset.__getitem__()
@@ -65,10 +39,11 @@ class MyDataTransform(DataTransform):
         raise NotImplementedError
 
 
-# === FOUNDATION ===
 
 class MyFoundation(Foundation):
     """Your model. Extend this with your architecture.
+    This model can itself be the main model (it is a nn.Module class),
+    or you can create a separate model that is initialized here, for cleaner separation of concerns. 
 
     __init__ receives:
       - config: MyFoundationConfig (your hyperparameters from YAML)
@@ -87,10 +62,12 @@ class MyFoundation(Foundation):
         #     nn.Linear(config.input_dim, config.hidden_dim),
         #     ...
         # )
+        # OR
+        # self.model = MyModelImplementation(...)
 
         raise NotImplementedError()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor: # not required
         raise NotImplementedError
 
 

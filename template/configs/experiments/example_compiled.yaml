@@ -1,6 +1,6 @@
-# Compiled training experiment
-experiment:
-  report_dir: reports/example_compiled
+name_suffix:
+  experiment: compile
+  compile: true
 
 compile: true
 
