@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from myproject.experiments.registry import ExperimentRegistry
+from myproject.experiments import ExperimentRegistry
 
 
 def main() -> None:
@@ -28,15 +28,15 @@ def main() -> None:
     parser.add_argument("--continue-on-error", action="store_true")
     args = parser.parse_args()
 
-    # Determine experiments to run
+    all_names = list(ExperimentRegistry.keys())
     if args.all:
-        names = list(ExperimentRegistry.keys())
+        names = all_names
     elif args.names:
         names = args.names
     elif args.filter_startswith:
-        names = ExperimentRegistry.filter(startswith=args.filter_startswith)
+        names = [n for n in all_names if n.startswith(args.filter_startswith)]
     elif args.filter_contains:
-        names = ExperimentRegistry.filter(contains=args.filter_contains)
+        names = [n for n in all_names if args.filter_contains in n]
 
     if not names:
         print("No experiments matched")

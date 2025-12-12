@@ -8,12 +8,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from loguru import logger
-
-from bbml.core.utils import config_compose
 from bbml.core.datamodels.configs import TrainerConfig
+from bbml.core.utils import config_compose
 
-from myproject.experiments.registry import ExperimentRegistry
+from myproject.experiments import ExperimentRegistry
 from myproject.experiments.base import ExperimentConfig
 
 
@@ -32,13 +30,12 @@ def main() -> None:
 
     if args.name not in ExperimentRegistry:
         available = list(ExperimentRegistry.keys())
-        logger.error(f"Unknown experiment: {args.name}. Available: {available}")
+        print(f"Error: Unknown experiment '{args.name}'. Available: {available}", file=sys.stderr)
         sys.exit(1)
 
     experiment_cls = ExperimentRegistry[args.name]
     experiment_config = ExperimentConfig(name=args.name, **composed_config.get("experiment", {}))
 
-    # Check if experiment expects trainer_config
     sig = inspect.signature(experiment_cls.__init__)
     if "trainer_config" in sig.parameters:
         experiment = experiment_cls(
