@@ -1,0 +1,54 @@
+# Qwen Image Edit - Base Training Configuration
+# Usage: python examples/qwen_image/train.py -c configs/qwen_image/base.yaml
+
+# Trainer configuration
+project: qwen-image-edit
+name: base
+output_dir: checkpoints/qwen_image
+
+# Training loop
+train_epochs: 1
+batch_size: 1
+step: 0
+
+# Optimizer (registered in bbml)
+optimizer: adamw
+lr_scheduler: cosine
+
+# Step triggers
+save_step_trigger:
+  every: 1000
+validation_step_trigger:
+  every: 500
+
+# Logging
+logging_backends:
+  - wandb
+
+# Model configuration
+from_pretrained: Qwen/Qwen-Image-Edit-2509
+
+# Sequence and resolution
+train_max_sequence_length: 512
+vae_image_size: 1048576  # 1024 * 1024
+
+# Timestep scheduling
+train_dist: linear
+train_shift: true
+inference_dist: linear
+inference_shift: true
+
+# Memory optimization
+offload_text_encoder: true
+quantize_text_encoder: false
+quantize_transformer: false
+vae_tiling: false
+gradient_checkpointing: false
+
+# Loss configuration
+train_loss_terms:
+  mse: 1.0
+
+# LoRA configuration (if using finetuner)
+lora_rank: 16
+lora_alpha: 16
