@@ -16,7 +16,7 @@ from bbml import logger
 from bbml.registries import LRSchedulerRegistry, OptimizerRegistry
 
 
-def init_cls_from_config(cls: type, config: dict, *args, **kwargs):
+def init_cls_from_config(cls: type, config: BaseModel, *args, **kwargs):
     """
         Dynamically map config values to class constructor parameters.
     """
@@ -167,8 +167,8 @@ class SimpleTrainer(Trainer):
         for i, batch in enumerate(tqdm(test_dataloader, desc="Test Steps", position=2)):
             test_input = self.model.input_model(**batch)
             output: BaseModel = self.model.run(test_input)
-            logger.log({f"{k}_{i}":v for k,v in test_input.model_dump().items()}, commit=False)
-            logger.log({f"{k}_{i}":v for k,v in output.model_dump().items()}, commit=False)
+            logger.log({f"input_{k}_{i}":v for k,v in test_input.model_dump().items()}, commit=False)
+            logger.log({f"output_{k}_{i}":v for k,v in output.model_dump().items()}, commit=False)
 
             testing_samples.append({
                 "input": test_input,
