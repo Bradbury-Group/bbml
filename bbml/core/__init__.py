@@ -13,7 +13,7 @@ from .trainer import Trainer
 from .registry import Registry
 from .datamodels import FoundationConfig, TrainerConfig
 from .logging import LoggingBackend
-from .run_interface import run_interface
+from .run_interface import run_interface, parse_run_args
 from .utils import (
     config_compose,
     LossAccumulator,
@@ -40,6 +40,7 @@ __all__ = [
     "FoundationConfig",
     "LoggingBackend",
     "run_interface",
+    "parse_run_args",
     "config_compose",
     "LossAccumulator",
     "Ramp",

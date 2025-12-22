@@ -12,6 +12,7 @@ from .core import (
     FoundationConfig,
     LoggingBackend,
     run_interface,
+    parse_run_args,
     config_compose,
     LossAccumulator,
     Ramp,
@@ -46,6 +47,7 @@ __all__ = [
     "FoundationConfig",
     "LoggingBackend",
     "run_interface",
+    "parse_run_args"
     "config_compose",
     "LossAccumulator",
     "Ramp",
