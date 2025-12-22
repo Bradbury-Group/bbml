@@ -164,11 +164,11 @@ class SimpleTrainer(Trainer):
         self.model.eval()
         test_dataloader = self.test_datapipe.get_loader()
         testing_samples = []
-        for batch in tqdm(test_dataloader, desc="Test Steps", position=2):
+        for i, batch in enumerate(tqdm(test_dataloader, desc="Test Steps", position=2)):
             test_input = self.model.input_model(**batch)
             output: BaseModel = self.model.run(test_input)
-            logger.log(test_input.model_dump(), commit=False)
-            logger.log(output.model_dump(), commit=False)
+            logger.log({f"{k}_{i}":v for k,v in test_input.model_dump().items()}, commit=False)
+            logger.log({f"{k}_{i}":v for k,v in output.model_dump().items()}, commit=False)
 
             testing_samples.append({
                 "input": test_input,
