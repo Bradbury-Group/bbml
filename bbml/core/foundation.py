@@ -89,3 +89,15 @@ class Foundation(Trainable, Runnable, Serializable, nn.Module):
         self.dtype = dtype
         self.device = device
         return super().to(*args, **kwargs)
+    
+    def should_log_training(self, step: int) -> bool:
+        """
+            log train step at same step as running validation, but not during validation
+        """
+        if self.train_config is None:
+            warnings.warn("Train config is None")
+            return False
+        return (
+            self.training
+            and self.train_config.check_step_trigger(step, self.train_config.validation_step_trigger)
+        )
