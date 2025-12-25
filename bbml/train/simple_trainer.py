@@ -14,6 +14,7 @@ from bbml.core.interfaces import Runnable
 from bbml.core.trainer import Trainer
 from bbml import logger
 from bbml.registries import LRSchedulerRegistry, OptimizerRegistry
+from bbml.utils import set_seed
 
 
 def _coerce_type(value, annotation):
@@ -69,9 +70,11 @@ def init_cls_from_config(cls: type, config: BaseModel, *args, **kwargs):
 
 
 class SimpleTrainer(Trainer):
-    
-    
+
     def train(self):
+        set_seed(self.train_config.seed)
+        print(f"[SimpleTrainer] Seed set to {self.train_config.seed}")
+
         if self.train_config.logging_backends is not None:
             logger.start(
                 self.train_config.logging_backends,
