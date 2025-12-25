@@ -1,8 +1,6 @@
-
-
-
 from collections import defaultdict
 import enum
+import random
 from typing import Any, Iterable, Literal, Sequence
 from torch.utils.data import DataLoader, Dataset, Sampler
 
@@ -151,14 +149,19 @@ class CombinedDataset(Dataset):
     # ------------------------------------------------------------------ #
     # Splitting
     # ------------------------------------------------------------------ #
-    def split(self, *ratios: float) -> list["CombinedDataset"]:
+    def split(self, *ratios: float, seed: int | None = None) -> list["CombinedDataset"]:
         """
         Split this CombinedDataset into multiple CombinedDatasets according
         to the provided ratios.
 
         Example:
             ds1 = CombinedDataset().add_dataset(...)
-            train_ds, val_ds = ds1.split(0.8, 0.2)
+            train_ds, val_ds = ds1.split(0.8, 0.2, seed=42)
+
+        Args:
+            *ratios: Split ratios (e.g., 0.8, 0.2 for 80/20 split).
+            seed: If provided, shuffle indices before splitting for randomized
+                splits. Uses a local Random instance for reproducibility.
 
         The split is done along the *combined* index space (i.e. respecting
         the global order imposed by the chosen combine method), and then
@@ -170,8 +173,14 @@ class CombinedDataset(Dataset):
 
         total_len = len(self)
         if total_len == 0:
-            # Return empty splits with same method
             return [CombinedDataset(self.method) for _ in ratios]
+
+        if seed is not None:
+            rng = random.Random(seed)
+            iteration_order = list(range(total_len))
+            rng.shuffle(iteration_order)
+        else:
+            iteration_order = range(total_len)
 
         total_ratio = float(sum(ratios))
         if total_ratio <= 0:
@@ -202,11 +211,12 @@ class CombinedDataset(Dataset):
             cumsum += L
             boundaries.append(cumsum)  # exclusive upper bound for that split
 
-        # Walk combined indices once and assign each to its split & dataset
+        # position = sequential counter for split assignment
+        # global_i = actual index into _index_mapping (shuffled if seed provided)
         current_split = 0
         current_end = boundaries[0]
-        for global_i in range(total_len):
-            while global_i >= current_end and current_split < num_splits - 1:
+        for position, global_i in enumerate(iteration_order):
+            while position >= current_end and current_split < num_splits - 1:
                 current_split += 1
                 current_end = boundaries[current_split]
 
@@ -251,9 +261,39 @@ class DataPipe(CombinedDataset):
         self.num_workers = num_workers
         self.extra_keys = extra_keys
 
-    def add_transforms(self, transforms:dict[str, DataTransform]):
+    def add_transforms(self, transforms: dict[str, DataTransform]):
         self.transforms.update(transforms)
         return self  # chain
+
+    def _clone_from_combined(self, combined: CombinedDataset, **overrides) -> "DataPipe":
+        """Create a DataPipe from a CombinedDataset, copying this pipe's config."""
+        child = DataPipe(
+            batch_size=overrides.get("batch_size", self.batch_size),
+            shuffle=overrides.get("shuffle", self.shuffle),
+            num_workers=overrides.get("num_workers", self.num_workers),
+            method=combined.method,
+            extra_keys=overrides.get("extra_keys", self.extra_keys),
+        )
+        child.transforms = self.transforms.copy()
+        # Transfer internal state from the combined dataset
+        child.datasets = combined.datasets
+        child._indices_per_dataset = combined._indices_per_dataset
+        child._index_mapping = combined._index_mapping
+        return child
+
+    def split(self, *ratios: float, seed: int | None = None, **overrides) -> list["DataPipe"]:
+        """Split into multiple DataPipes, preserving config.
+
+        Args:
+            *ratios: Split ratios (e.g., 0.9, 0.1 for 90/10 split).
+            seed: Random seed for shuffled split. None = sequential.
+            **overrides: Override config for all children (batch_size, shuffle, etc.)
+
+        Returns:
+            List of DataPipes with same transforms/config as parent.
+        """
+        combined_splits = super().split(*ratios, seed=seed)
+        return [self._clone_from_combined(c, **overrides) for c in combined_splits]
 
     def get_loader(self) -> DataLoader:
         return DataLoader(

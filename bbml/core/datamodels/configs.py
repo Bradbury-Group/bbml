@@ -32,6 +32,7 @@ class TrainerConfig(BaseModel):
     lr_scheduler: Annotated[str, AfterValidator(in_registry(LRSchedulerRegistry))] | None = None
     load_path: str | Path | None = None
 
+    seed: int = 0
     train_epochs: int = 1
     batch_size: int = 1
     step: int = 0
