@@ -56,7 +56,7 @@ class CosineWarmupMaxHoldScheduler(LRScheduler):
     4. Constant minimum LR (cosine_steps to infinity)
     """
     
-    def __init__(self, optimizer, warmup_steps, hold_steps, cosine_steps, min_lr=1e-5, last_epoch=-1):
+    def __init__(self, optimizer, warmup_steps: int, hold_steps: int, cosine_steps: int, min_lr: float = 1e-5, last_epoch: int = -1):
         """
         Args:
             optimizer: PyTorch optimizer

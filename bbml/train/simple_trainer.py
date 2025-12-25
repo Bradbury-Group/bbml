@@ -16,15 +16,39 @@ from bbml import logger
 from bbml.registries import LRSchedulerRegistry, OptimizerRegistry
 
 
+def _coerce_type(value, annotation):
+    if annotation is inspect.Parameter.empty:
+        return value
+    origin = getattr(annotation, "__origin__", None)
+    if origin is not None:
+        type_args = getattr(annotation, "__args__", ())
+        for arg in type_args:
+            if arg is not type(None):
+                annotation = arg
+                break
+    if annotation in (int, float, str, bool):
+        try:
+            return annotation(value)
+        except (TypeError, ValueError):
+            pass
+    return value
+
+
 def init_cls_from_config(cls: type, config: BaseModel, *args, **kwargs):
-    """
-        Dynamically map config values to class constructor parameters.
-    """
+    """Map config values to class constructor parameters with type coercion."""
     sig = inspect.signature(cls.__init__)
-    
-    for param_name in sig.parameters.keys():
-        if param_name in config and param_name not in kwargs:
-            kwargs[param_name] = getattr(config, param_name)
+
+    for param_name, param in sig.parameters.items():
+        if param_name in ("self", "cls"):
+            continue
+        if param_name in kwargs:
+            continue
+        if hasattr(config, param_name):
+            value = getattr(config, param_name)
+            if value is None:
+                continue
+            value = _coerce_type(value, param.annotation)
+            kwargs[param_name] = value
 
     params = list(sig.parameters.values())
 
@@ -40,7 +64,6 @@ def init_cls_from_config(cls: type, config: BaseModel, *args, **kwargs):
 
     for name in names_to_pop:
         kwargs.pop(name, None)
-    
     return cls(*args, **kwargs)
 
 
