@@ -113,6 +113,10 @@ class SimpleTrainer(Trainer):
         total_steps = self.train_config.train_epochs * len(dataloader)
         pbar_total = tqdm(total=total_steps, desc="Total Steps", position=0)
         for epoch in range(self.train_config.train_epochs):
+            if hasattr(self.train_datapipe, "set_epoch"):
+                # For epoch seeded shuffling
+                print(f"[SimpleTrainer] Setting epoch={epoch} on train_datapipe")
+                self.train_datapipe.set_epoch(epoch)
             pbar_epoch = tqdm(
                 dataloader,
                 desc=f"Epoch {epoch+1}/{self.train_config.train_epochs}",
