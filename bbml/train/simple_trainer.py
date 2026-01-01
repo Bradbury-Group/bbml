@@ -4,6 +4,7 @@ import warnings
 
 from pydantic import BaseModel
 import torch
+from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torch.optim import Optimizer
@@ -133,8 +134,18 @@ class SimpleTrainer(Trainer):
                     "split": "train",
                 }
                 batch.update(step_info)
-                loss = self.model.single_step(batch)
+                result = self.model.single_step(batch)
+
+                if isinstance(result, tuple):
+                    loss, extra_metrics = result
+                else:
+                    loss, extra_metrics = result, {}
+
                 loss.backward()
+
+                grad_clip = getattr(self.train_config, "grad_clip_norm", None)
+                if grad_clip is not None:
+                    clip_grad_norm_(self.model.parameters(), grad_clip)
                 optimizer.step()
                 lr_scheduler.step()
 
@@ -143,6 +154,7 @@ class SimpleTrainer(Trainer):
                     "train_loss": loss.item(),
                     **step_info,
                     **learning_rates,
+                    **extra_metrics,
                 }
                 logger.log(log_metrics, commit=True)
                 pbar_total.set_postfix(log_metrics)
@@ -172,7 +184,8 @@ class SimpleTrainer(Trainer):
                 "split": "validation",
             }
             batch.update(step_info)
-            loss = self.model.single_step(batch)
+            result = self.model.single_step(batch)
+            loss = result[0] if isinstance(result, tuple) else result
             all_val_losses.append(loss)
         val_loss = torch.sum(torch.stack(all_val_losses)) / len(val_dataloader)  # it's fine if exact inaccuracies due to last batch size happen
         val_loss = val_loss.to(device="cpu")
@@ -209,10 +222,14 @@ class SimpleTrainer(Trainer):
         
     def do_val_test_save(self, do_all=False):
         self.model.eval()
-        if self.train_config.check_step_trigger(
-            self.train_config.step,
-            self.train_config.validation_step_trigger
-        ) or do_all:
+        should_validate = (
+            self.train_config.step > 0
+            and self.train_config.check_step_trigger(
+                self.train_config.step,
+                self.train_config.validation_step_trigger,
+            )
+        ) or do_all
+        if should_validate:
             self.validate()
         
         if self.train_config.check_step_trigger(
@@ -245,4 +262,3 @@ class SimpleTrainer(Trainer):
         lrs_path = Path(load_path) / "lr_scheduler.pt"
         if lrs_path.exists():
             self.lr_scheduler.load_state_dict(torch.load(lrs_path, weights_only=True))
-
