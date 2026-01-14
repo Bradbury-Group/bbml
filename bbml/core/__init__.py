@@ -3,6 +3,18 @@ from .interfaces import (
     Serializable,
     Trainable
 )
+from .checkpointing import (
+    apply_delta_state,
+    assert_trainable_coverage,
+    compute_structure_fingerprint,
+    extract_delta_state,
+    extract_trainable_param_names,
+    filter_state_dict_to_names,
+    get_trainable_param_names,
+    load_delta,
+    save_delta,
+    validate_checkpoint_meta,
+)
 from .data_transform import DataTransform
 from .datapipe import (
     DataPipe,
@@ -30,6 +42,16 @@ __all__ = [
     "Trainable",
     "Runnable",
     "Serializable",
+    "apply_delta_state",
+    "assert_trainable_coverage",
+    "compute_structure_fingerprint",
+    "extract_delta_state",
+    "extract_trainable_param_names",
+    "filter_state_dict_to_names",
+    "get_trainable_param_names",
+    "load_delta",
+    "save_delta",
+    "validate_checkpoint_meta",
     "DataTransform",
     "DataPipe",
     "Foundation",
