@@ -384,11 +384,16 @@ class AccelerateTrainer(Trainer):
         Save checkpoint (main process only after barrier).
         Gathers state dict from WRAPPED model to handle DDP/FSDP correctly,
         then passes to foundation.save() which extracts trainable delta.
+
+        Save path structure: {save_path}/{run_name}/step_{step}/
         """
         self.accelerator.wait_for_everyone()
 
         if self.accelerator.is_main_process:
             save_path = Path(save_path)
+            run_name = self.train_config.name or "unnamed"
+            step = self.train_config.step
+            save_path = save_path / run_name / f"step_{step}"
             save_path.mkdir(parents=True, exist_ok=True)
 
             # Gather state dict from WRAPPED model (handles DDP/FSDP sharding)
