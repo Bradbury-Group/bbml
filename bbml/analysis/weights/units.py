@@ -6,11 +6,25 @@ import torch
 @dataclass
 class WeightUnit:
     key: str
-    weight: torch.Tensor
+    tensor: torch.Tensor
     kind: str
     layer: Optional[int] = None
     head: Optional[int] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    meta: Dict[str, Any] = field(default_factory=dict)
+    
+    # Backward compatibility property
+    @property
+    def weight(self) -> torch.Tensor:
+        return self.tensor
+    
+    # Backward compatibility property for old 'metadata' name
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        return self.meta
+    
+    @metadata.setter
+    def metadata(self, value: Dict[str, Any]) -> None:
+        self.meta = value
 
 
 class WeightIndex:
@@ -31,7 +45,7 @@ class WeightIndex:
         kind: Optional[str] = None,
         layer: Optional[int] = None,
         head: Optional[int] = None,
-    ) -> "WeightIndex":
+    ) -> List[WeightUnit]:
         filtered = self._units
         
         if kind is not None:
@@ -43,15 +57,44 @@ class WeightIndex:
         if head is not None:
             filtered = [u for u in filtered if u.head == head]
         
-        return WeightIndex(filtered)
+        return filtered
     
-    def get_kinds(self) -> List[str]:
+    def add(self, unit: WeightUnit) -> "WeightIndex":
+        """Add a unit to the index and return self for chaining."""
+        self._units.append(unit)
+        return self
+    
+    def kinds(self) -> List[str]:
+        """Get all unique kinds in this index."""
         return sorted(set(u.kind for u in self._units))
     
-    def get_layers(self) -> List[int]:
+    def get_kinds(self) -> List[str]:
+        """Backward compatibility. Use kinds() instead."""
+        return self.kinds()
+    
+    def layers(self) -> List[int]:
+        """Get all unique layers in this index."""
         layers = [u.layer for u in self._units if u.layer is not None]
         return sorted(set(layers))
     
-    def get_heads(self) -> List[int]:
+    def get_layers(self) -> List[int]:
+        """Backward compatibility. Use layers() instead."""
+        return self.layers()
+    
+    def heads(self) -> List[int]:
+        """Get all unique heads in this index."""
         heads = [u.head for u in self._units if u.head is not None]
         return sorted(set(heads))
+    
+    def get_heads(self) -> List[int]:
+        """Backward compatibility. Use heads() instead."""
+        return self.heads()
+    
+    def summary(self) -> Dict[str, Any]:
+        """Get a summary of the index contents."""
+        return {
+            "total_units": len(self._units),
+            "kinds": self.kinds(),
+            "layers": self.layers(),
+            "heads": self.heads(),
+        }

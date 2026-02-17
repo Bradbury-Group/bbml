@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Dict
 import torch
 from bbml.analysis.extractors.base import WeightExtractor
 from bbml.analysis.weights.units import WeightUnit, WeightIndex
@@ -10,12 +10,25 @@ class GPT2WeightExtractor(WeightExtractor):
         self.foundation = None
         self.config = None
     
-    def load(self, model: Any, device: str = "cpu") -> None:
+    def load(self, model: Any, device: str = "cpu") -> "GPT2WeightExtractor":
         if isinstance(model, GPT2Foundation):
             self.foundation = model
             self.config = model.config
         else:
             raise ValueError("Model must be a GPT2Foundation instance")
+        return self
+    
+    def get_config(self) -> Dict[str, Any]:
+        """Return model configuration."""
+        if self.foundation is None or self.config is None:
+            raise RuntimeError("Must call load() before get_config()")
+        
+        return {
+            "n_layers": self.config.n_layer,
+            "n_head": self.config.n_head,
+            "n_embd": self.config.n_embd,
+            "vocab_size": self.config.vocab_size,
+        }
     
     def extract_index(
         self,
@@ -44,19 +57,19 @@ class GPT2WeightExtractor(WeightExtractor):
             if include_full:
                 units.append(WeightUnit(
                     key=f"layer{layer_idx}.attn.q.full",
-                    weight=q_weight.clone(),
+                    tensor=q_weight.clone(),
                     kind="attn.q.full",
                     layer=layer_idx,
                 ))
                 units.append(WeightUnit(
                     key=f"layer{layer_idx}.attn.k.full",
-                    weight=k_weight.clone(),
+                    tensor=k_weight.clone(),
                     kind="attn.k.full",
                     layer=layer_idx,
                 ))
                 units.append(WeightUnit(
                     key=f"layer{layer_idx}.attn.v.full",
-                    weight=v_weight.clone(),
+                    tensor=v_weight.clone(),
                     kind="attn.v.full",
                     layer=layer_idx,
                 ))
@@ -69,21 +82,21 @@ class GPT2WeightExtractor(WeightExtractor):
                 for head_idx in range(n_head):
                     units.append(WeightUnit(
                         key=f"layer{layer_idx}.attn.q.head{head_idx}",
-                        weight=q_heads[:, head_idx, :].clone(),
+                        tensor=q_heads[:, head_idx, :].clone(),
                         kind="attn.q.head",
                         layer=layer_idx,
                         head=head_idx,
                     ))
                     units.append(WeightUnit(
                         key=f"layer{layer_idx}.attn.k.head{head_idx}",
-                        weight=k_heads[:, head_idx, :].clone(),
+                        tensor=k_heads[:, head_idx, :].clone(),
                         kind="attn.k.head",
                         layer=layer_idx,
                         head=head_idx,
                     ))
                     units.append(WeightUnit(
                         key=f"layer{layer_idx}.attn.v.head{head_idx}",
-                        weight=v_heads[:, head_idx, :].clone(),
+                        tensor=v_heads[:, head_idx, :].clone(),
                         kind="attn.v.head",
                         layer=layer_idx,
                         head=head_idx,
@@ -94,15 +107,15 @@ class GPT2WeightExtractor(WeightExtractor):
                 c_proj_weight = block.mlp.c_proj.weight
                 
                 units.append(WeightUnit(
-                    key=f"layer{layer_idx}.mlp.c_fc",
-                    weight=c_fc_weight.clone(),
-                    kind="mlp.c_fc",
+                    key=f"layer{layer_idx}.ffn.up",
+                    tensor=c_fc_weight.clone(),
+                    kind="ffn.up",
                     layer=layer_idx,
                 ))
                 units.append(WeightUnit(
-                    key=f"layer{layer_idx}.mlp.c_proj",
-                    weight=c_proj_weight.clone(),
-                    kind="mlp.c_proj",
+                    key=f"layer{layer_idx}.ffn.down",
+                    tensor=c_proj_weight.clone(),
+                    kind="ffn.down",
                     layer=layer_idx,
                 ))
         

@@ -1,7 +1,7 @@
 from pathlib import Path
 from bbml.foundations.gpt2.datamodels import GPTConfig
 from bbml.foundations.gpt2.gpt2_foundation import GPT2Foundation
-from bbml.registries import WeightExtractorRegistry, MetricRegistry
+from bbml.analysis import get_adapter, get_metric
 from bbml.analysis import compute_similarity_matrix, generate_report
 import torch
 
@@ -19,10 +19,10 @@ foundation.to(device=device)
 print()
 
 print("Step 2: Extracting weight units...")
-extractor = WeightExtractorRegistry.get("gpt2")()
-extractor.load(foundation, device=device)
+adapter = get_adapter("gpt2")
+adapter.load(foundation, device=device)
 
-index = extractor.extract_index(
+index = adapter.extract_index(
     include_heads=True,
     include_full=False,
     include_ffn=False
@@ -34,10 +34,10 @@ print(f"First few: {[u.key for u in q_heads[:3]]}")
 print()
 
 print("Step 3: Computing pairwise cosine similarity...")
-metric = MetricRegistry.get("cosine")()
+metric = get_metric("cosine")
 
 similarity_matrix = compute_similarity_matrix(
-    units=list(q_heads),
+    units=q_heads,
     metric=metric,
     symmetric=True,
     show_progress=True
@@ -50,7 +50,7 @@ output_dir = Path(__file__).parent.parent.parent / "output"
 
 report_info = generate_report(
     similarity_matrix=similarity_matrix,
-    units=list(q_heads),
+    units=q_heads,
     output_dir=str(output_dir),
     report_name="gpt2_q_heads_similarity",
     metric_name="Cosine Similarity",

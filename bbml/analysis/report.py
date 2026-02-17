@@ -15,6 +15,7 @@ def generate_report(
     figsize: Tuple[int, int] = (14, 12),
     vmin: float = -1.0,
     vmax: float = 1.0,
+    cmap: str = "RdBu_r",
 ) -> Dict[str, Any]:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -26,7 +27,7 @@ def generate_report(
     labels = [u.key for u in units]
     
     fig, ax = plt.subplots(figsize=figsize)
-    im = ax.imshow(similarity_matrix, cmap="RdBu_r", vmin=vmin, vmax=vmax, aspect="auto")
+    im = ax.imshow(similarity_matrix, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto")
     
     ax.set_xticks(range(n))
     ax.set_yticks(range(n))

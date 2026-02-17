@@ -21,7 +21,8 @@ def compute_similarity_matrix(
         for i in range(n):
             matrix[i, i] = 1.0
             for j in range(i + 1, n):
-                sim = metric.compute(units[i].weight, units[j].weight)
+                result = metric.compare(units[i].tensor, units[j].tensor)
+                sim = result.score
                 matrix[i, j] = sim
                 matrix[j, i] = sim
                 pbar.update(1)
@@ -36,7 +37,8 @@ def compute_similarity_matrix(
                 if i == j:
                     matrix[i, j] = 1.0
                 else:
-                    sim = metric.compute(units[i].weight, units[j].weight)
+                    result = metric.compare(units[i].tensor, units[j].tensor)
+                    sim = result.score
                     matrix[i, j] = sim
                 pbar.update(1)
         
