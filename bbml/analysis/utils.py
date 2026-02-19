@@ -6,6 +6,7 @@ from typing import List, Callable, Dict, Any, Tuple
 import numpy as np
 from bbml.analysis.weights.units import WeightUnit
 from bbml.analysis.metrics.base import Metric
+from bbml.analysis.similarity import compute_similarity_matrix
 
 
 def compute_layer_statistics(
@@ -47,24 +48,12 @@ def compute_layer_statistics(
         
         # Compute similarity matrix for this layer
         n = len(layer_units)
-        sim_matrix = np.zeros((n, n), dtype=np.float32)
-        
-        if symmetric:
-            for i in range(n):
-                sim_matrix[i, i] = 1.0
-                for j in range(i + 1, n):
-                    result = metric.compare(layer_units[i].tensor, layer_units[j].tensor)
-                    sim = result.score
-                    sim_matrix[i, j] = sim
-                    sim_matrix[j, i] = sim
-        else:
-            for i in range(n):
-                for j in range(n):
-                    if i == j:
-                        sim_matrix[i, j] = 1.0
-                    else:
-                        result = metric.compare(layer_units[i].tensor, layer_units[j].tensor)
-                        sim_matrix[i, j] = result.score
+        sim_matrix = compute_similarity_matrix(
+            units=layer_units,
+            metric=metric,
+            symmetric=symmetric,
+            show_progress=False,
+        )
         
         # Compute statistics (excluding diagonal)
         mask = ~np.eye(n, dtype=bool)

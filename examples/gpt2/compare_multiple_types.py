@@ -6,7 +6,10 @@ from bbml.analysis import compute_similarity_matrix, generate_report
 import torch
 
 
-def compare_cross_layer_heads(foundation, adapter, device):
+DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent.parent / "output"
+
+
+def compare_cross_layer_heads(foundation, adapter, device, output_dir: Path = DEFAULT_OUTPUT_DIR):
     """Compare attention heads from different layers."""
     print("\n" + "=" * 70)
     print("Cross-Layer Head Comparison")
@@ -27,7 +30,6 @@ def compare_cross_layer_heads(foundation, adapter, device):
     similarity_matrix = compute_similarity_matrix(q_heads, metric)
     
     # Generate report
-    output_dir = Path(__file__).parent.parent.parent / "output"
     generate_report(
         similarity_matrix=similarity_matrix,
         units=q_heads,
@@ -38,7 +40,7 @@ def compare_cross_layer_heads(foundation, adapter, device):
     )
 
 
-def compare_qkv_matrices(foundation, adapter, device):
+def compare_qkv_matrices(foundation, adapter, device, output_dir: Path = DEFAULT_OUTPUT_DIR):
     """Compare full Q, K, V matrices across layers."""
     print("\n" + "=" * 70)
     print("Q/K/V Matrix Comparison")
@@ -61,7 +63,6 @@ def compare_qkv_matrices(foundation, adapter, device):
     similarity_matrix = compute_similarity_matrix(qkv_units, metric)
     
     # Generate report
-    output_dir = Path(__file__).parent.parent.parent / "output"
     generate_report(
         similarity_matrix=similarity_matrix,
         units=qkv_units,
@@ -73,7 +74,7 @@ def compare_qkv_matrices(foundation, adapter, device):
     )
 
 
-def compare_ffn_projections(foundation, adapter, device):
+def compare_ffn_projections(foundation, adapter, device, output_dir: Path = DEFAULT_OUTPUT_DIR):
     """Compare FFN up and down projections."""
     print("\n" + "=" * 70)
     print("FFN Projection Comparison")
@@ -95,7 +96,6 @@ def compare_ffn_projections(foundation, adapter, device):
     similarity_matrix = compute_similarity_matrix(ffn_units, metric)
     
     # Generate report
-    output_dir = Path(__file__).parent.parent.parent / "output"
     generate_report(
         similarity_matrix=similarity_matrix,
         units=ffn_units,
@@ -106,7 +106,7 @@ def compare_ffn_projections(foundation, adapter, device):
     )
 
 
-def main():
+def main(output_dir: Path = DEFAULT_OUTPUT_DIR):
     """Run all comparison examples."""
     print("\n" + "=" * 70)
     print("GPT-2 Weight Comparison Examples")
@@ -127,13 +127,13 @@ def main():
     print(f"Model loaded on device: {device}\n")
     
     # Run each comparison
-    compare_cross_layer_heads(foundation, adapter, device)
-    compare_qkv_matrices(foundation, adapter, device)
-    compare_ffn_projections(foundation, adapter, device)
+    compare_cross_layer_heads(foundation, adapter, device, output_dir=output_dir)
+    compare_qkv_matrices(foundation, adapter, device, output_dir=output_dir)
+    compare_ffn_projections(foundation, adapter, device, output_dir=output_dir)
     
     print("\n" + "=" * 70)
     print("All comparisons complete!")
-    print("Check ./output/ for results")
+    print(f"Check {output_dir}/ for results")
     print("=" * 70 + "\n")
 
 

@@ -68,27 +68,15 @@ class WeightIndex:
         """Get all unique kinds in this index."""
         return sorted(set(u.kind for u in self._units))
     
-    def get_kinds(self) -> List[str]:
-        """Backward compatibility. Use kinds() instead."""
-        return self.kinds()
-    
     def layers(self) -> List[int]:
         """Get all unique layers in this index."""
         layers = [u.layer for u in self._units if u.layer is not None]
         return sorted(set(layers))
     
-    def get_layers(self) -> List[int]:
-        """Backward compatibility. Use layers() instead."""
-        return self.layers()
-    
     def heads(self) -> List[int]:
         """Get all unique heads in this index."""
         heads = [u.head for u in self._units if u.head is not None]
         return sorted(set(heads))
-    
-    def get_heads(self) -> List[int]:
-        """Backward compatibility. Use heads() instead."""
-        return self.heads()
     
     def summary(self) -> Dict[str, Any]:
         """Get a summary of the index contents."""

@@ -1,5 +1,4 @@
 import numpy as np
-from pathlib import Path
 from bbml.foundations.gpt2.datamodels import GPTConfig
 from bbml.foundations.gpt2.gpt2_foundation import GPT2Foundation
 from bbml.analysis import (
@@ -20,7 +19,6 @@ def analyze_within_layer_similarity(foundation, adapter, device):
     print("=" * 70 + "\n")
     
     index = adapter.extract_index(include_heads=True, include_full=False, include_ffn=False)
-    config = adapter.get_config()
     
     metric = get_metric("cosine")
     
@@ -95,7 +93,6 @@ def compare_qk_correlation(foundation, adapter, device):
     print("=" * 70 + "\n")
     
     index = adapter.extract_index(include_heads=True, include_full=False, include_ffn=False)
-    config = adapter.get_config()
     
     # Get all Q and K heads
     q_heads = index.select(kind="attn.q.head")
