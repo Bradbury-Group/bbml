@@ -1,22 +1,19 @@
-from abc import abstractmethod
+import random
 from pathlib import Path
 from typing import Any
-import warnings
-import random
 
-from safetensors.torch import load_file, save_model
-import torch
-from torch import Tensor
 import tiktoken
-from torch.nn import functional as F
+import torch
 from einops import rearrange
+from torch import Tensor
+from torch.nn import functional as F
 
-from bbml.core.datamodels.configs import FoundationConfig, TrainerConfig
+from bbml import logger
+from bbml.core.datamodels.configs import TrainerConfig
 from bbml.core.foundation import Foundation
 from bbml.data.transforms import DataTransform
 from bbml.foundations.gpt2.datamodels import GPTConfig, GPTInput, GPTOutput
 from bbml.foundations.gpt2.model import GPT
-from bbml import logger
 
 
 class GPT2TextDataTransform(DataTransform):
@@ -29,13 +26,13 @@ class GPT2TextDataTransform(DataTransform):
         start_ind = random.randint(0, max(0,len(inp)-data_length))
         cropped_inp = inp[start_ind:start_ind+data_length]
         return torch.tensor(self.tokenizer.encode_ordinary(cropped_inp))
-    
+
     def batch_transform(self, inp: list[Tensor]) -> Tensor:
         min_len = min(len(i) for i in inp)
         cropped_inp = [i[:min_len] for i in inp]
         return torch.stack(cropped_inp)
 
-    
+
 class GPT2Foundation(Foundation):
 
     def __init__(self, config: GPTConfig, train_config: TrainerConfig | None):
@@ -49,8 +46,17 @@ class GPT2Foundation(Foundation):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.dtype = torch.float32
 
-    def forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
-        logits = self.model(input_ids)
+    def forward(self, batch_or_ids, attention_mask: torch.LongTensor | None = None, **kwargs):
+        """Support both bbml training batches and raw token tensors."""
+        # This is now a somewhat yucky example
+        if isinstance(batch_or_ids, dict):
+            return super().forward(batch_or_ids)
+
+        input_ids = batch_or_ids
+        return self.forward_logits(input_ids, attention_mask=attention_mask, **kwargs)
+
+    def forward_logits(self, input_ids: torch.LongTensor, attention_mask: torch.LongTensor | None = None, **kwargs) -> torch.Tensor:
+        logits = self.model(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
         return logits
 
     def single_step(self, batch: dict[str, Any]) -> Tensor:
@@ -61,7 +67,7 @@ class GPT2Foundation(Foundation):
             raise ValueError(f"Input length {in_toks.size(1)} > {self.config.block_size=}")
         out_toks = toks[:, 1:]
 
-        logits = self(in_toks)  # [B, T-1, V]
+        logits = self.forward_logits(in_toks)  # [B, T-1, V]
         loss = F.cross_entropy(
             input=rearrange(logits, "B T C -> (B T) C"),
             target=rearrange(out_toks, "B T -> (B T)"),
@@ -70,8 +76,7 @@ class GPT2Foundation(Foundation):
         logger.log({"perplexity": torch.exp(loss).item()})
 
         return loss
-        
-    
+
     def get_train_parameters(self):
         # start with all of the candidate parameters
         param_dict = {pn: p for pn, p in self.named_parameters()}
@@ -91,7 +96,7 @@ class GPT2Foundation(Foundation):
         print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
 
         return optim_groups
-    
+
     @property
     def data_transforms(self) -> dict[str, DataTransform]:
         return {"text": GPT2TextDataTransform(block_size=self.config.block_size)}
@@ -104,7 +109,7 @@ class GPT2Foundation(Foundation):
     @property
     def output_model(self):
         return GPTOutput
-    
+
     def run(self, input: GPTInput) -> GPTOutput:
         if input.text is None and input.ids is None:
             # unconditional generation
@@ -115,14 +120,14 @@ class GPT2Foundation(Foundation):
             idx = self.tokenizer.encode(input.text, allowed_special={"<|endoftext|>"})
         else:
             idx = self.tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})
-        
+
         idx = torch.tensor(idx).unsqueeze(0).to(self.device)
 
         for _ in range(input.max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             # forward the model to get the logits for the index in the sequence
-            logits = self(idx_cond)
+            logits = self.forward_logits(idx_cond)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / input.temperature
             # optionally crop the logits to only the top k options
@@ -135,39 +140,16 @@ class GPT2Foundation(Foundation):
             idx_next = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
-        
+
         ids = idx.squeeze(0).tolist()
         text = self.tokenizer.decode(ids)
         return GPTOutput(text=text, ids=ids)
-        
 
-    def load(self, load_path):
-        if not isinstance(load_path, Path): 
-            load_path = Path(load_path)
-        if not load_path.is_dir():
-            raise ValueError(f"Expected {load_path=} to be a directory")
-        model_state_dict = load_file(load_path / f"model.safetensors")
-        missing, unexpected = self.model.load_state_dict(model_state_dict, strict=False, assign=True)
-        if missing: 
-            warnings.warn(f"model missing {missing}")
-        if unexpected: 
-            warnings.warn(f"model unexpected {unexpected}")
-
-    def save(self, save_path):
-        if not isinstance(save_path, Path): 
-            save_path = Path(save_path)
-        save_path.mkdir(parents=True, exist_ok=True)
-        if not save_path.is_dir():
-            raise ValueError(f"Expected {save_path=} to be a directory")
-        save_path.mkdir(parents=True, exist_ok=True)
-        save_model(self.model, save_path / f"model.safetensors")
-        print(f"Saved model to {save_path}")
-    
 
     def from_hf(self, model_type):
         if model_type not in {'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'}:
             raise ValueError(f"Invalid model_type: {model_type}. Must be one of: 'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'")
-        
+
         from transformers import GPT2LMHeadModel
         print("loading weights from pretrained gpt: %s" % model_type)
 
@@ -182,10 +164,10 @@ class GPT2Foundation(Foundation):
         config_args['vocab_size'] = 50257 # always 50257 for GPT model checkpoints
         config_args['block_size'] = 1024 # always 1024 for GPT model checkpoints
         config_args['bias'] = True # always True for GPT model checkpoints
-        
+
         # modify config to represent correct values
         self.config = self.config.model_copy(update=config_args)
-        
+
         # create a from-scratch initialized minGPT model
         model = GPT(self.config)
         sd = model.state_dict()
@@ -217,4 +199,3 @@ class GPT2Foundation(Foundation):
                     sd[k].copy_(sd_hf[k])
 
         return model
-

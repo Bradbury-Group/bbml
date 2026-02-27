@@ -275,6 +275,9 @@ class DataPipe(CombinedDataset):
             extra_keys=overrides.get("extra_keys", self.extra_keys),
         )
         child.transforms = self.transforms.copy()
+        if "collate_fn" in self.__dict__:
+            child.collate_fn = self.collate_fn
+
         # Transfer internal state from the combined dataset
         child.datasets = combined.datasets
         child._indices_per_dataset = combined._indices_per_dataset

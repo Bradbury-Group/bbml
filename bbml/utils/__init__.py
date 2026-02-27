@@ -1,4 +1,4 @@
-from .seed import set_seed
+from .seed import set_distributed_seed, set_seed
 from .storage import download_url, get_file_md5, get_md5, get_str_md5
 
 __all__ = [
@@ -6,6 +6,7 @@ __all__ = [
     "get_file_md5",
     "get_md5",
     "get_str_md5",
+    "set_distributed_seed",
     "set_seed",
 ]
 

@@ -3,7 +3,7 @@ from typing import Annotated, Any, Callable, Literal, Mapping, Sequence
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, model_validator
 
-from bbml.registries import LRSchedulerRegistry, LoggingBackendRegistry, OptimizerRegistry
+from bbml.registries import LoggingBackendRegistry, LRSchedulerRegistry, OptimizerRegistry
 
 
 def in_registry(registry) -> Callable:
@@ -12,7 +12,7 @@ def in_registry(registry) -> Callable:
         values_seq = [value] if isinstance(value, str) else value
         invalid_values = [v for v in values_seq if v not in registry.keys()]
         if invalid_values:
-            raise ValueError(f"Validation: {invalid_values=} not in {registry!r}")        
+            raise ValueError(f"Validation: {invalid_values=} not in {registry!r}")
         return value
     return validate_fn
 
@@ -21,7 +21,7 @@ StepTrigger = int|Sequence[int]|Mapping[Literal["at", "every"],int|Sequence[int]
 class TrainerConfig(BaseModel):
     model_config = ConfigDict(extra="allow")  # meta
 
-    project: str 
+    project: str
     name: str | None = None
     output_dir: Path = Path("checkpoints")
     name_suffix: dict[str, Any]|None = None
@@ -44,6 +44,14 @@ class TrainerConfig(BaseModel):
     num_validation_samples: int| None = None
     num_test_samples: int| None = None
 
+    gradient_accumulation_steps: int = 1
+    grad_clip_norm: float | None = None
+
+    # Per-param-group LR/WD rules. Each rule: {match: regex, lr_mult: float, weight_decay?: float}
+    # First matching rule wins. Unmatched params get base lr/wd.
+    # TODO: Add this info to example config and remove comment here
+    param_group_rules: list[dict[str, Any]] | None = None
+
     @model_validator(mode="after")
     def add_suffix_to_names(self):
         if self.name is None:
@@ -59,7 +67,7 @@ class TrainerConfig(BaseModel):
         output_dir_str = str(self.output_dir).removesuffix("/")
         self.output_dir = Path(output_dir_str + suffix_sum)
         return self
-    
+
     @staticmethod
     def check_step_trigger(step: int, trigger: StepTrigger):
         if isinstance(trigger, Mapping):
@@ -72,6 +80,7 @@ class TrainerConfig(BaseModel):
         elif isinstance(trigger, Sequence):
             return step in trigger
         return False
+
 
 class FoundationConfig(BaseModel):
     model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)

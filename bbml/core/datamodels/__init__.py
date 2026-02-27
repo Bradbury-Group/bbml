@@ -1,10 +1,9 @@
 from .configs import (
     FoundationConfig,
-    TrainerConfig
+    TrainerConfig,
 )
 
 __all__ = [
-    "TrainerConfig",
     "FoundationConfig",
+    "TrainerConfig",
 ]
-
