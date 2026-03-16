@@ -1,5 +1,9 @@
 from bbml.analysis.weights.units import WeightUnit, WeightIndex
-from bbml.analysis.similarity import compute_similarity_matrix
+from bbml.analysis.similarity import (
+    compute_similarity_matrix,
+    SimilarityMetric,
+    SimilarityReport,
+)
 from bbml.analysis.report import generate_report
 from bbml.analysis.extractors.base import WeightExtractor, ModelAdapter
 from bbml.analysis.utils import (
@@ -8,6 +12,12 @@ from bbml.analysis.utils import (
     compare_weight_correlation,
     compute_per_layer_mean_correlation,
 )
+from bbml.analysis.containers import ClusterResult, ClusterInput, CompressionResult
+from bbml.analysis.transformations.base import LayerTransformer, TransformMode
+from bbml.analysis.clustering import LayerClusterer
+from bbml.analysis.representative import RepresentativePicker
+from bbml.analysis.compression import LayerCompressor
+from bbml.analysis.evaluation import PipelineEvaluator, EvaluationResult
 from bbml.registries import WeightExtractorRegistry, MetricRegistry
 
 import bbml.analysis.register_defaults
@@ -16,10 +26,10 @@ import bbml.analysis.register_defaults
 def get_adapter(name: str):
     """
     Get a weight extractor adapter by name.
-    
+
     Args:
         name: The name of the adapter (e.g., "gpt2")
-    
+
     Returns:
         An instantiated WeightExtractor subclass
     """
@@ -30,10 +40,10 @@ def get_adapter(name: str):
 def get_metric(name: str):
     """
     Get a metric by name.
-    
+
     Args:
         name: The name of the metric (e.g., "cosine")
-    
+
     Returns:
         An instantiated Metric subclass
     """
@@ -42,8 +52,23 @@ def get_metric(name: str):
 
 
 __all__ = [
+    # Data containers
     "WeightUnit",
     "WeightIndex",
+    "ClusterResult",
+    "ClusterInput",
+    "CompressionResult",
+    "SimilarityReport",
+    "EvaluationResult",
+    # Interfaces
+    "LayerTransformer",
+    "TransformMode",
+    "SimilarityMetric",
+    "LayerClusterer",
+    "RepresentativePicker",
+    "LayerCompressor",
+    "PipelineEvaluator",
+    # Legacy / helpers
     "compute_similarity_matrix",
     "generate_report",
     "get_adapter",

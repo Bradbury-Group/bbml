@@ -1,8 +1,74 @@
-from typing import List
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 from tqdm import tqdm
+
 from bbml.analysis.weights.units import WeightUnit
 from bbml.analysis.metrics.base import Metric
+
+
+@dataclass
+class SimilarityReport:
+    """Structured report accompanying a similarity matrix.
+
+    Attributes:
+        matrix: The computed similarity matrix.
+        labels: Optional labels corresponding to each row/column.
+        details: Arbitrary extra information (e.g. metric name, parameters).
+    """
+    matrix: np.ndarray
+    labels: Optional[List[str]] = None
+    details: Dict[str, Any] = field(default_factory=dict)
+
+
+class SimilarityMetric(ABC):
+    """Computes a pairwise similarity matrix over a list of layers.
+
+    Implementations define how every pair of weight units is compared,
+    producing an N×N similarity matrix.
+    """
+
+    @abstractmethod
+    def compute_matrix(
+        self,
+        layers: List[WeightUnit],
+    ) -> np.ndarray:
+        """Compute the pairwise similarity matrix.
+
+        Args:
+            layers: The list of (possibly transformed) weight units.
+
+        Returns:
+            A 2-D numpy array of shape ``(N, N)`` where ``N = len(layers)``.
+        """
+        pass
+
+    def compute_report(
+        self,
+        layers: List[WeightUnit],
+    ) -> SimilarityReport:
+        """Compute the similarity matrix together with a structured report.
+
+        The default implementation delegates to ``compute_matrix`` and wraps
+        the result in a ``SimilarityReport`` with layer keys as labels.
+        Subclasses may override this to attach richer details.
+
+        Args:
+            layers: The list of weight units.
+
+        Returns:
+            A ``SimilarityReport`` containing the matrix and metadata.
+        """
+        matrix = self.compute_matrix(layers)
+        labels = [unit.key for unit in layers]
+        return SimilarityReport(matrix=matrix, labels=labels)
+
+
+# ---------------------------------------------------------------------------
+# Legacy helper functions (pre-interface API, kept for backward compatibility)
+# ---------------------------------------------------------------------------
 
 
 def _initialize_similarity_matrix(size: int) -> np.ndarray:
