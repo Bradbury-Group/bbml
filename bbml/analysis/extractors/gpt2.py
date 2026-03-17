@@ -11,6 +11,47 @@ _PROJ_INDEX = {"q": 0, "k": 1, "v": 2}
 _PROJ_NAMES = ("q", "k", "v")
 
 
+def _is_hf_gpt2(model: Any) -> bool:
+    """Check if model is a HuggingFace GPT2LMHeadModel."""
+    cls_name = type(model).__name__
+    return cls_name in ("GPT2LMHeadModel", "GPT2Model")
+
+
+def _convert_conv1d_to_linear(model: nn.Module) -> None:
+    """Convert all Conv1D modules to nn.Linear in-place.
+
+    HuggingFace GPT-2 uses Conv1D with weight shape [in, out].
+    nanoGPT/bbml uses nn.Linear with weight shape [out, in].
+    This transposes weights and swaps the modules so the extractor
+    works uniformly with nn.Linear everywhere.
+    """
+    try:
+        from transformers.pytorch_utils import Conv1D
+    except ImportError:
+        return
+
+    for name, module in list(model.named_modules()):
+        if isinstance(module, Conv1D):
+            # Conv1D stores weight as [in_features, out_features]
+            in_f, out_f = module.weight.shape
+            linear = nn.Linear(
+                in_f, out_f,
+                bias=module.bias is not None,
+                device=module.weight.device,
+                dtype=module.weight.dtype,
+            )
+            linear.weight.data.copy_(module.weight.data.T)
+            if module.bias is not None:
+                linear.bias.data.copy_(module.bias.data)
+
+            # Navigate to parent and replace
+            parts = name.split(".")
+            parent = model
+            for p in parts[:-1]:
+                parent = getattr(parent, p)
+            setattr(parent, parts[-1], linear)
+
+
 # ---------------------------------------------------------------------------
 # Drop-in replacement for fused c_attn that holds Q, K, V independently
 # ---------------------------------------------------------------------------
@@ -67,8 +108,21 @@ class GPT2WeightExtractor(WeightExtractor):
         if isinstance(model, GPT2Foundation):
             self.foundation = model
             self.config = model.config
+        elif _is_hf_gpt2(model):
+            # Wrap HF model: convert Conv1D→Linear, extract config
+            _convert_conv1d_to_linear(model)
+            # Create a lightweight shell so downstream code sees .model and .config
+            shell = object.__new__(GPT2Foundation)
+            object.__setattr__(shell, "model", model)
+            object.__setattr__(shell, "config", model.config)
+            object.__setattr__(shell, "device", device)
+            object.__setattr__(shell, "dtype", next(model.parameters()).dtype)
+            self.foundation = shell
+            self.config = model.config
         else:
-            raise ValueError("Model must be a GPT2Foundation instance")
+            raise ValueError(
+                "Model must be a GPT2Foundation or HuggingFace GPT2LMHeadModel"
+            )
         return self
 
     def get_config(self) -> Dict[str, Any]:
