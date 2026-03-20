@@ -1,11 +1,17 @@
-"""Weight extractor for LLaMA-family models (LLaMA 1/2/3, Mistral, etc.).
+"""Weight extractor for LLaMA-family models (LLaMA 1/2/3, Mistral, Qwen2, Gemma-2, etc.).
 
-Handles any ``transformers.LlamaForCausalLM``-compatible model.  Unlike
-GPT-2, LLaMA uses separate ``nn.Linear`` projections throughout — no fused
-QKV or Conv1D gymnastics required.
+Handles any ``transformers.LlamaForCausalLM``-compatible model — any model
+whose decoder layers expose ``self_attn.{q,k,v,o}_proj`` and
+``mlp.{gate,up,down}_proj`` as ``nn.Linear`` modules.  Unlike GPT-2, these
+architectures use separate projections throughout — no fused QKV or Conv1D
+gymnastics required.
 
 Supports Grouped Query Attention (GQA): Q has ``n_heads`` heads, K/V have
 ``n_kv_heads`` heads (may differ).  Per-head slicing respects this layout.
+
+Supports decoupled ``head_dim``: if the config provides an explicit
+``head_dim`` (e.g. Gemma-2 where ``head_dim=256 != hidden_size // n_heads``),
+it is used directly.  Otherwise falls back to ``hidden_size // n_heads``.
 
 Canonical kind vocabulary (superset of GPT-2):
     attn.q, attn.k, attn.v, attn.out   — attention projections
@@ -97,7 +103,7 @@ class LlamaWeightExtractor(WeightExtractor):
         self._n_layers = self._cfg.num_hidden_layers
         self._n_heads = self._cfg.num_attention_heads
         self._n_kv_heads = getattr(self._cfg, "num_key_value_heads", self._n_heads)
-        self._head_dim = self._cfg.hidden_size // self._n_heads
+        self._head_dim = getattr(self._cfg, "head_dim", self._cfg.hidden_size // self._n_heads)
         return self
 
     def get_config(self) -> Dict[str, Any]:

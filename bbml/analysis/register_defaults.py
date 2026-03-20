@@ -6,4 +6,6 @@ from bbml.analysis.metrics.cosine import CosineMetric
 
 WeightExtractorRegistry.register("gpt2")(GPT2WeightExtractor)
 WeightExtractorRegistry.register("llama")(LlamaWeightExtractor)
+WeightExtractorRegistry.register("qwen")(LlamaWeightExtractor)
+WeightExtractorRegistry.register("gemma2")(LlamaWeightExtractor)
 MetricRegistry.register("cosine")(CosineMetric)
