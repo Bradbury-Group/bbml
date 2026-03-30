@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import warnings
 from functools import partial
 from pathlib import Path
@@ -13,6 +14,7 @@ from accelerate.utils import (
     set_seed,
 )
 from pydantic import BaseModel
+from bbml.logger.utils import is_image_like, is_image_batch_like
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
     FullOptimStateDictConfig,
     FullStateDictConfig,
@@ -55,6 +57,7 @@ class AccelerateTrainer(Trainer):
         fsdp_sharding_strategy: FSDP sharding (None=DDP, "FULL_SHARD", "SHARD_GRAD_OP", etc).
         fsdp_transformer_layer_cls: Transformer layer class for FSDP auto-wrap.
         fsdp_cpu_offload: Offload FSDP params to CPU.
+        fsdp_use_orig_params: Use original params in FSDP (required for mixed requires_grad, e.g. LoRA).
     """
 
     def __init__(
@@ -71,6 +74,7 @@ class AccelerateTrainer(Trainer):
         fsdp_sharding_strategy: str | None = None,
         fsdp_transformer_layer_cls: type | None = None,
         fsdp_cpu_offload: bool = False,
+        fsdp_use_orig_params: bool = False,
     ):
         super().__init__(model, train_config, train_datapipe, val_datapipe, test_datapipe)
 
@@ -100,6 +104,7 @@ class AccelerateTrainer(Trainer):
                 ),
                 cpu_offload=fsdp_cpu_offload,
                 auto_wrap_policy=auto_wrap_policy,
+                use_orig_params=fsdp_use_orig_params,
                 state_dict_config=FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
                 optim_state_dict_config=FullOptimStateDictConfig(offload_to_cpu=True, rank0_only=True),
             )
@@ -219,6 +224,7 @@ class AccelerateTrainer(Trainer):
             self.optimizer.zero_grad(set_to_none=True)
 
             for micro_step, batch in pbar:
+                micro_step_start = time.perf_counter()
                 with self.accelerator.accumulate(self.wrapped_model):
                     # Namespace step info to avoid collision with data keys
                     batch["_bbml"] = {
@@ -239,14 +245,20 @@ class AccelerateTrainer(Trainer):
 
                     self.accelerator.backward(loss)
 
+                micro_step_time = time.perf_counter() - micro_step_start
+
                 # All side effects gated on sync_gradients
                 if self.accelerator.sync_gradients:
+                    optim_step_start = time.perf_counter()
+
                     if grad_clip is not None:
                         self.accelerator.clip_grad_norm_(self.wrapped_model.parameters(), grad_clip)
 
                     self.optimizer.step()
                     self.lr_scheduler.step()
                     self.optimizer.zero_grad(set_to_none=True)
+
+                    optim_step_time = time.perf_counter() - optim_step_start
 
                     reduced_loss = self.accelerator.reduce(loss.detach(), reduction="mean")
 
@@ -256,6 +268,8 @@ class AccelerateTrainer(Trainer):
                         "step": self.train_config.step,
                         "micro_step": micro_step,
                         "epoch": epoch,
+                        "timing/micro_step_s": micro_step_time,
+                        "timing/optimizer_step_s": optim_step_time,
                         **learning_rates,
                         **extra_metrics,
                     }
@@ -327,7 +341,7 @@ class AccelerateTrainer(Trainer):
 
     @torch.no_grad()
     def test(self):
-        """Test loop (runs on all ranks, logs on main)."""
+        """Test loop (runs on all ranks, gathers results to main for logging)."""
         if not isinstance(self.model, Runnable):
             if self.accelerator.is_main_process:
                 warnings.warn(f"Model {self.model!r} is not runnable, testing via `run()` is not available.")
@@ -341,33 +355,53 @@ class AccelerateTrainer(Trainer):
         self.wrapped_model.eval()
         test_dataloader = self.accelerator.prepare(self.test_datapipe.get_loader())
 
-        testing_samples = []
-        input_logs: dict[str, list] = {}
-        output_logs: dict[str, list] = {}
+        local_inputs: list[dict] = []
+        local_outputs: list[dict] = []
         for i, batch in enumerate(tqdm(test_dataloader, desc="Test", disable=not self.accelerator.is_main_process)):
             unwrapped = self.accelerator.unwrap_model(self.wrapped_model)
             test_input = unwrapped.input_model(**batch)
             output: BaseModel = unwrapped.run(test_input)
 
-            if self.accelerator.is_main_process:
-                for k, v in test_input.model_dump().items():
+            local_inputs.append(test_input.model_dump())
+            local_outputs.append(output.model_dump())
+
+        # Gather results from all ranks to main process
+        from torch.distributed import gather_object
+
+        world_size = self.accelerator.num_processes
+        all_inputs = [None] * world_size if self.accelerator.is_main_process else None
+        all_outputs = [None] * world_size if self.accelerator.is_main_process else None
+        gather_object(local_inputs, all_inputs, dst=0)
+        gather_object(local_outputs, all_outputs, dst=0)
+
+        testing_samples = []
+        if self.accelerator.is_main_process:
+            # Flatten gathered lists: all_inputs is list[list[dict]]
+            flat_inputs = [d for rank_list in all_inputs for d in rank_list]
+            flat_outputs = [d for rank_list in all_outputs for d in rank_list]
+
+            input_logs: dict[str, list] = {}
+            output_logs: dict[str, list] = {}
+            for inp, out in zip(flat_inputs, flat_outputs):
+                for k, v in inp.items():
                     input_logs.setdefault(f"input_{k}", []).append(v)
-                for k, v in output.model_dump().items():
+                for k, v in out.items():
                     output_logs.setdefault(f"output_{k}", []).append(v)
 
-            testing_samples.append({"input": test_input, "output": output})
-
-        if self.accelerator.is_main_process:
-            # Use prompts as image captions instead of logging them separately
+            # Use prompts as captions; convert any image-like lists to image dicts
             prompts = input_logs.pop("input_prompt", [])
-            if prompts:
-                for img_key, logs in [("input_image", input_logs), ("output_images", output_logs)]:
-                    if img_key in logs:
-                        logs[img_key] = {
-                            f"[{i}] {p}": img
-                            for i, (p, img) in enumerate(zip(prompts, logs[img_key]))
-                        }
-            logger.log({**input_logs, **output_logs}, commit=False)
+            all_logs = {**input_logs, **output_logs}
+            for key, vals in all_logs.items():
+                if not isinstance(vals, list) or not vals:
+                    continue
+                if any(is_image_like(v) or is_image_batch_like(v) for v in vals):
+                    if prompts and len(prompts) == len(vals):
+                        all_logs[key] = {f"[{i}] {p}": v for i, (p, v) in enumerate(zip(prompts, vals))}
+                    else:
+                        all_logs[key] = {f"[{i}]": v for i, v in enumerate(vals)}
+            logger.log(all_logs, commit=False)
+
+            testing_samples = [{"input": i, "output": o} for i, o in zip(flat_inputs, flat_outputs)]
 
         self.wrapped_model.train()
         return testing_samples
