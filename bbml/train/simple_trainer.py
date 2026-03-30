@@ -242,17 +242,31 @@ class SimpleTrainer(Trainer):
         self.model.eval()
         test_dataloader = self.test_datapipe.get_loader()
         testing_samples = []
+        input_logs: dict[str, list] = {}
+        output_logs: dict[str, list] = {}
         for i, batch in enumerate(tqdm(test_dataloader, desc="Test Steps", position=2)):
             test_input = self.model.input_model(**batch)
             output: BaseModel = self.model.run(test_input)
-            logger.log({f"input_{k}_{i}":v for k,v in test_input.model_dump().items()}, commit=False)
-            logger.log({f"output_{k}_{i}":v for k,v in output.model_dump().items()}, commit=False)
+            for k, v in test_input.model_dump().items():
+                input_logs.setdefault(f"input_{k}", []).append(v)
+            for k, v in output.model_dump().items():
+                output_logs.setdefault(f"output_{k}", []).append(v)
 
             testing_samples.append({
                 "input": test_input,
                 "output": output,
             })
 
+        # Use prompts as image captions instead of logging them separately
+        prompts = input_logs.pop("input_prompt", [])
+        if prompts:
+            for img_key, logs in [("input_image", input_logs), ("output_images", output_logs)]:
+                if img_key in logs:
+                    logs[img_key] = {
+                        f"[{i}] {p}": img
+                        for i, (p, img) in enumerate(zip(prompts, logs[img_key]))
+                    }
+        logger.log({**input_logs, **output_logs}, commit=False)
         return testing_samples
 
     def do_val_test_save(self, do_all=False):
