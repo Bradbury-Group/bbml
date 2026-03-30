@@ -8,6 +8,7 @@ from torch.nn.utils import clip_grad_norm_
 from tqdm import tqdm
 
 from bbml import logger
+from bbml.logger.utils import is_image_like, is_image_batch_like
 from bbml.core.interfaces import Runnable
 from bbml.core.trainer import Trainer
 from bbml.registries import LRSchedulerRegistry, OptimizerRegistry
@@ -257,16 +258,18 @@ class SimpleTrainer(Trainer):
                 "output": output,
             })
 
-        # Use prompts as image captions instead of logging them separately
+        # Use prompts as captions; convert any image-like lists to image dicts
         prompts = input_logs.pop("input_prompt", [])
-        if prompts:
-            for img_key, logs in [("input_image", input_logs), ("output_images", output_logs)]:
-                if img_key in logs:
-                    logs[img_key] = {
-                        f"[{i}] {p}": img
-                        for i, (p, img) in enumerate(zip(prompts, logs[img_key]))
-                    }
-        logger.log({**input_logs, **output_logs}, commit=False)
+        all_logs = {**input_logs, **output_logs}
+        for key, vals in all_logs.items():
+            if not isinstance(vals, list) or not vals:
+                continue
+            if any(is_image_like(v) or is_image_batch_like(v) for v in vals):
+                if prompts and len(prompts) == len(vals):
+                    all_logs[key] = {f"[{i}] {p}": v for i, (p, v) in enumerate(zip(prompts, vals))}
+                else:
+                    all_logs[key] = {f"[{i}]": v for i, v in enumerate(vals)}
+        logger.log(all_logs, commit=False)
         return testing_samples
 
     def do_val_test_save(self, do_all=False):

@@ -1,6 +1,8 @@
 from typing import Any, Iterable, Mapping
 import warnings
 
+import numpy as np
+
 from bbml.core.logging import LoggingBackend
 from bbml.logger.utils import (
     is_scalar,
@@ -82,6 +84,11 @@ class WandbBackend(LoggingBackend):
                 continue
             
             
+
+            # list of scalars/strings → single-column wandb.Table
+            if isinstance(val, list) and val and all(isinstance(v, (int, float, str, np.number)) for v in val):
+                payload[key] = wandb.Table(columns=[key], data=[[v] for v in val])
+                continue
 
             # fallback: ignore and warn
             warnings.warn(f"Unsupported data type for key {key}: {type(val)} fallback: ignore and warn")
