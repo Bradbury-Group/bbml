@@ -281,6 +281,12 @@ class AccelerateTrainer(Trainer):
                     self.do_val_test_save()
                     self.train_config.step += 1
 
+                    if (self.train_config.max_training_steps is not None
+                            and self.train_config.step >= self.train_config.max_training_steps):
+                        self._print(f"[AccelerateTrainer] Reached max_training_steps={self.train_config.max_training_steps}")
+                        self.do_val_test_save(do_all=True)
+                        return
+
         self.do_val_test_save(do_all=True)
 
     def _infer_batch_size(self, batch: dict) -> int:

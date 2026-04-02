@@ -36,6 +36,7 @@ class TrainerConfig(BaseModel):
     train_epochs: int = 1
     batch_size: int = 1
     step: int = 0
+    max_training_steps: int | None = None
 
     validation_step_trigger: StepTrigger|None = None
     test_step_trigger: StepTrigger|None = None

@@ -37,6 +37,8 @@ class WandbBackend(LoggingBackend):
             name=name,
             config=config,
         )
+        wandb.define_metric("step")
+        wandb.define_metric("*", step_metric="step")
 
     def log(self, data: Mapping[str, Any], *, step: int | None = None, commit: bool = True) -> None:
         import wandb  # lazy import
