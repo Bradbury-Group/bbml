@@ -11,6 +11,7 @@ def parse_run_args():
     parser = argparse.ArgumentParser(description="Run training.")
     parser.add_argument("-c", "--config", type=str, action="append", required=True, help="Add YAML configs to compose (path or URL)")
     parser.add_argument("--where", type=str, help="Where to run", default="local")
+    parser.add_argument("--num-gpus", type=int, default=1, help="Number of GPUs for local multi-GPU training")
     args = parser.parse_args()
 
     if args.where == "local":

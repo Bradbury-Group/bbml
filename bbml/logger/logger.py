@@ -77,11 +77,17 @@ class Logger(AbstractLogger):
                 backend.watch_model(model, **kwargs)
 
     def finish(self) -> None:
+        import logging
         for backend in self.backends:
             try:
                 backend.finish()
             except Exception:
-                pass
+                # Log + continue: a failing backend's finish shouldn't block
+                # other backends from cleaning up, but the failure leaves a
+                # record (vs. the previous silent `pass`).
+                logging.exception(
+                    "[Logger] backend %s finish failed", type(backend).__name__
+                )
         self.backends = []
 
 

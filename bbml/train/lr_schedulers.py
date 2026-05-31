@@ -114,6 +114,35 @@ class CosineWarmupMaxHoldScheduler(LRScheduler):
         return lrs
 
 
+@LRSchedulerRegistry.register("WarmupConstantScheduler")
+class WarmupConstantScheduler(LRScheduler):
+    """Linear warmup followed by constant LR."""
+
+    def __init__(self, optimizer, warmup_steps: int, last_epoch: int = -1):
+        """
+        Args:
+            optimizer: PyTorch optimizer
+            warmup_steps: Number of warmup steps (linear increase from 0 to base LR)
+            last_epoch: Last epoch index (default: -1)
+        """
+        self.warmup_steps = warmup_steps
+        if warmup_steps <= 0:
+            raise ValueError(f"warmup_steps ({warmup_steps}) must be > 0")
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        """Compute learning rate for current step."""
+        step = self.last_epoch + 1
+        lrs = []
+        for base_lr in self.base_lrs:
+            if step < self.warmup_steps:
+                lr = base_lr * (step + 1) / self.warmup_steps
+            else:
+                lr = base_lr
+            lrs.append(lr)
+        return lrs
+
+
 @LRSchedulerRegistry.register("OneCycleScheduler")
 class OneCycleScheduler(LRScheduler):
     """One-cycle learning rate scheduler with peak at specified step."""

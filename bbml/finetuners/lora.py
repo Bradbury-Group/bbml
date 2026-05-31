@@ -1,21 +1,44 @@
-import itertools
-import os.path
+"""
+! Delete this comment later ! RB
+
+Proposed change:
+
+Save/load no longer overrides foundation with just lora based weights. We now use the foundation method directly.
+
+This is to simplify ensemble-of-models training, and cases like lora wrapping foundations whilst still training some layers as full weight / heads / mlps. We have modified foundation to use 'delta' checkpointing which just saves all trainable params.
+
+How LoRA now works:
+1. get_peft_model() wraps a submodule
+2. Original weights -> requires_grad=False (frozen by PEFT) Any full finetune based weights should be intentionally unfrozen after lora added, and lora target modules should not include this layer.
+3. Wrapped module replaces original in Foundation's module tree
+
+This is simpler and avoids the bug where non-LoRA trainables were dropped.
+
+FSDP2 helper: :meth:`LoraFinetuner.unwrap_peft_for_fsdp` returns the
+underlying transformer (``self.model.base_model.model`` for PEFT-wrapped,
+else ``self.model``) so callers using
+:func:`bbml.fsdp.parallelise.fully_shard_model` can reach the inner block
+list without wrestling with PEFT wrappers. The unwrap keeps adapter params
+trainable so the subsequent ``fully_shard`` shards them.
+"""
+import collections
+import warnings
 from pathlib import Path
 from typing import Any, Mapping, Sequence
-import uuid
-import collections
-import warnings  # builtin
-from peft.tuners.lora import LoraLayer
-import torch  # external library
 
-from peft import load_peft_weights, set_peft_model_state_dict, get_peft_model_state_dict, LoraConfig, get_peft_model
+import torch
+from peft import (
+    LoraConfig,
+    get_peft_model,
+    get_peft_model_state_dict,
+)
 from peft.utils import id_tensor_storage
-from safetensors.torch import load_file, save_file
+from torch import nn
 from torch.nn import Linear
 
+from bbml.core.finetuner import Finetuner
 from bbml.core.foundation import Foundation
 from bbml.core.utils.debug import ftimed
-from bbml.core.finetuner import Finetuner
 
 
 def _find_linear_modules_names(
@@ -43,7 +66,6 @@ def _is_nested_mapping(d: Mapping[str, Any]):
     if not isinstance(d, Mapping):
         return False
     return all(isinstance(v,Mapping) for v in d.values())
-    
 
 
 def _torch_compile_key_adjustments(state_dict):
@@ -115,7 +137,6 @@ class LoraFinetuner(Finetuner):
     ):
         super().__init__(model)
 
-
         if _is_nested_mapping(module_kwargs):
             for k in module_kwargs:
                 module_kwargs[k].update(kwargs)
@@ -128,7 +149,7 @@ class LoraFinetuner(Finetuner):
 
         if module_names is None and module_kwargs is None and module_configs is None:
             raise ValueError("Attempted initializing LoraFinetuner with no module targets or configs")
-        
+
         if not _is_nested_mapping(module_kwargs) and isinstance(module_configs, LoraConfig):
             warnings.warn("Using both singular module_kwargs and module_configs, module_kwargs will be ignored")
 
@@ -138,7 +159,6 @@ class LoraFinetuner(Finetuner):
             module_kwargs = {}
         if module_names is None:
             module_names = []
-        
 
         # we need to normalize to dict[str, configs]
         config_dict = {}
@@ -167,7 +187,7 @@ class LoraFinetuner(Finetuner):
         if not all(hasattr(self.model, name) for name in config_dict.keys()):
             missing = [name for name in config_dict.keys() if not hasattr(self.model, name)]
             raise ValueError(f"Passed in module names not present in model({model.__class__}): {missing=}")
-        
+
         # load peft lora configs
         self.modules = {}
         for name, config in config_dict.items():
@@ -188,37 +208,62 @@ class LoraFinetuner(Finetuner):
 
 
     @ftimed
-    def load(self, load_path: str|Path):
+    def load(self, load_path: str | Path, **kwargs):
         """
-            load_path should be a directory. loaded by correspnding module names: name.safetensors
+        Load checkpoint via Foundation's trainable params loader (delta)
+        which includes the LoRA params (part of named params)
         """
-        load_path = Path(load_path)
-        print(f"Loading Lora from {load_path}")
-        device = getattr(self.model, "device", None)
-        for name, module in self.modules.items():
-            peft_weights = load_file(str(load_path/f"{name}.safetensors"), device=device)            
-            keys_warning = set_peft_model_state_dict(module, peft_weights)
-            print(f"{keys_warning=}")
+        return self.original_load(load_path, **kwargs)
 
+    def save(self, save_path: str | Path, **kwargs):
+        return self.original_save(save_path, **kwargs)
 
-    def save(self, save_path: str|Path):
+    def get_train_parameters(self):
         """
-            save_path should be a directory. saved to correspnding module names: name.safetensors
+        Intentionally global (not just self.modules) to ensure
+        non-LoRA trainables like rm_head are never dropped from optimizer
+        or checkpoints.
         """
-        save_path = Path(save_path)
-        save_path.mkdir(exist_ok=True)
+        return [{"params": [p for p in self.model.parameters() if p.requires_grad]}]
+
+    def export_state_dict(self) -> dict[str, dict]:
+        """
+        Export LoRA adapter weights only (PEFT format).
+        Prefer Foundation.save() for checkpointing.
+        """
+        state_dicts = {}
         for name, module in self.modules.items():
             state_dict = get_peft_model_state_dict(module)
             state_dict = _torch_compile_key_adjustments(state_dict)
             state_dict = _remove_duplicate_layers(state_dict)
-            # Remove tensor aliasing as in peft / huggingface
-            state_dict = _remove_tensor_aliasing(state_dict)
-            save_file(state_dict, str(save_path/f"{name}.safetensors"))
+            state_dicts[name] = state_dict
+        return state_dicts
 
+    def unwrap_peft_for_fsdp(self) -> nn.Module:
+        """Return the underlying transformer module for FSDP2 sharding.
 
-    def get_train_parameters(self):
-        all_params = list(itertools.chain.from_iterable(map(lambda m:m.parameters(), self.modules.values())))
-        all_trainable_params = [p for p in all_params if p.requires_grad]
-        return [{"params": all_trainable_params},]
+        PEFT wraps the foundation submodule as
+        ``PeftModel -> base_model (LoraModel) -> model (the inner transformer)``.
+        :func:`bbml.fsdp.parallelise.fully_shard_model` expects a module that
+        exposes the block list (e.g. ``transformer_blocks``); this helper
+        walks past the PEFT wrappers so callers don't have to.
 
+        Behaviour:
+            - If ``self.model`` has a ``base_model.model`` (PEFT wrapped):
+              return that inner transformer.
+            - Otherwise (no PEFT wrap, or ``self.model`` is the inner
+              transformer already): return ``self.model``.
 
+        Trainable status is preserved — the unwrap is purely structural.
+        The caller MUST shard BEFORE freezing any branches; freezing a
+        parameter before ``fully_shard`` causes FSDP2 to skip sharding it
+        and leaves a full tensor instead of a DTensor.
+        """
+        cur: nn.Module = self.model
+        base = getattr(cur, "base_model", None)
+        if base is not None:
+            inner = getattr(base, "model", None)
+            if inner is not None:
+                return inner
+            return base
+        return cur
