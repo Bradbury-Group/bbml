@@ -61,6 +61,28 @@ class Foundation(Trainable, Runnable, Serializable, nn.Module):
         """Routes to single_step for distributed training compatibility."""
         return self.single_step(batch)
 
+    def parallelise(self, mesh, *, policy) -> None:
+        """In-place FSDP2 parallelisation hook.
+
+        Override on subclasses that opt into ``FullyShardTrainer``. The
+        canonical implementation calls
+        :func:`bbml.fsdp.parallelise.fully_shard_model` against the inner
+        transformer's block list and output module, then optionally shards
+        any auxiliary heads (e.g. EMA, teacher) the foundation owns. Base
+        implementation raises ``NotImplementedError`` so trainers that try
+        to use ``FullyShardTrainer`` against an un-prepared foundation get a
+        clear error rather than a silent no-op.
+
+        Args:
+            mesh: ``DeviceMesh`` (typically the ``shard`` axis); the
+                ``FullyShardTrainer`` builds this from ``ParallelismConfig``.
+            policy: ``MixedPrecisionPolicy``, by default from
+                :func:`bbml.fsdp.policies.default_mp_policy`.
+        """
+        raise NotImplementedError(
+            "override parallelise() to enable FullyShardTrainer"
+        )
+
     def save(self, save_path: str | Path, *, state_dict: dict[str, Tensor] | None = None):
         """Default delta checkpoint save implementation."""
         save_path = Path(save_path)

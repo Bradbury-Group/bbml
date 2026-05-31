@@ -5,7 +5,7 @@ Proposed change:
 
 Save/load no longer overrides foundation with just lora based weights. We now use the foundation method directly.
 
-This is to simplify ensemble-of-models training, and cases like lora wrapping foundations whilst still training some layers as full weight / heads / mlps. We have modified foundation to use 'delta' checkpointing which just saves all trainable params. 
+This is to simplify ensemble-of-models training, and cases like lora wrapping foundations whilst still training some layers as full weight / heads / mlps. We have modified foundation to use 'delta' checkpointing which just saves all trainable params.
 
 How LoRA now works:
 1. get_peft_model() wraps a submodule
@@ -13,6 +13,13 @@ How LoRA now works:
 3. Wrapped module replaces original in Foundation's module tree
 
 This is simpler and avoids the bug where non-LoRA trainables were dropped.
+
+FSDP2 helper: :meth:`LoraFinetuner.unwrap_peft_for_fsdp` returns the
+underlying transformer (``self.model.base_model.model`` for PEFT-wrapped,
+else ``self.model``) so callers using
+:func:`bbml.fsdp.parallelise.fully_shard_model` can reach the inner block
+list without wrestling with PEFT wrappers. The unwrap keeps adapter params
+trainable so the subsequent ``fully_shard`` shards them.
 """
 import collections
 import warnings
@@ -26,6 +33,7 @@ from peft import (
     get_peft_model_state_dict,
 )
 from peft.utils import id_tensor_storage
+from torch import nn
 from torch.nn import Linear
 
 from bbml.core.finetuner import Finetuner
@@ -230,3 +238,32 @@ class LoraFinetuner(Finetuner):
             state_dict = _remove_duplicate_layers(state_dict)
             state_dicts[name] = state_dict
         return state_dicts
+
+    def unwrap_peft_for_fsdp(self) -> nn.Module:
+        """Return the underlying transformer module for FSDP2 sharding.
+
+        PEFT wraps the foundation submodule as
+        ``PeftModel -> base_model (LoraModel) -> model (the inner transformer)``.
+        :func:`bbml.fsdp.parallelise.fully_shard_model` expects a module that
+        exposes the block list (e.g. ``transformer_blocks``); this helper
+        walks past the PEFT wrappers so callers don't have to.
+
+        Behaviour:
+            - If ``self.model`` has a ``base_model.model`` (PEFT wrapped):
+              return that inner transformer.
+            - Otherwise (no PEFT wrap, or ``self.model`` is the inner
+              transformer already): return ``self.model``.
+
+        Trainable status is preserved — the unwrap is purely structural.
+        The caller MUST shard BEFORE freezing any branches; freezing a
+        parameter before ``fully_shard`` causes FSDP2 to skip sharding it
+        and leaves a full tensor instead of a DTensor.
+        """
+        cur: nn.Module = self.model
+        base = getattr(cur, "base_model", None)
+        if base is not None:
+            inner = getattr(base, "model", None)
+            if inner is not None:
+                return inner
+            return base
+        return cur
