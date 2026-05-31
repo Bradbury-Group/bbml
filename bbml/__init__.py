@@ -1,4 +1,4 @@
-from . import logger
+from . import fsdp, logger
 from .core import (
     DataPipe,
     DataTransform,
@@ -25,11 +25,19 @@ from .core import (
     run_interface,
     texam,
 )
+from .core.datamodels import (
+    CheckpointingConfig,
+    MetricsConfig,
+    ParallelismConfig,
+    SamplingConfig,
+)
 from .data import IdentityDataTransform, ImageDataTransform
 from .evaluation import BaseFoundationLM
 from .finetuners import LoraFinetuner
 from .registries import LoggingBackendRegistry, LRSchedulerRegistry, OptimizerRegistry
 from .train import SimpleTrainer
+from .train.distributed import FullyShardTrainer
+from .utils.logging_utils import log_loss_buckets
 
 __version__ = "0.1.0"
 
@@ -67,4 +75,12 @@ __all__ = [
     "ImageDataTransform",
     "IdentityDataTransform",
     "BaseFoundationLM",
+    # FSDP2 surface (round 1)
+    "fsdp",
+    "FullyShardTrainer",
+    "ParallelismConfig",
+    "SamplingConfig",
+    "MetricsConfig",
+    "CheckpointingConfig",
+    "log_loss_buckets",
 ]
