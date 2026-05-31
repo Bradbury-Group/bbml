@@ -92,8 +92,22 @@ class WandbBackend(LoggingBackend):
                 payload[key] = wandb.Table(columns=[key], data=[[v] for v in val])
                 continue
 
-            # fallback: ignore and warn
-            warnings.warn(f"Unsupported data type for key {key}: {type(val)} fallback: ignore and warn")
+            # list of pre-built wandb.Image (e.g. from SamplingMixin.fsdp_safe_sample
+            # which returns wandb.Image lists after all_gather_object).
+            if isinstance(val, list) and val and all(isinstance(v, wandb.Image) for v in val):
+                payload[key] = val
+                continue
+
+            # Raise loud — silently dropping a payload that the caller explicitly
+            # logged is a bug-class (e.g. user enables a feature in YAML and a
+            # new payload shape silently disappears). If a new shape is needed,
+            # add a branch above. The warn-and-ignore fallback was retired
+            # 2026-05-26 after `train/preview` list[wandb.Image] payloads were
+            # silently dropped from in-training sampling runs.
+            raise TypeError(
+                f"WandBBackend.log: unsupported payload for key {key!r}: type={type(val)!r}. "
+                f"Add a branch in WandBBackend.log() to handle this type."
+            )
 
         if payload:
             wandb.log(payload, step=step, commit=commit)
@@ -106,7 +120,11 @@ class WandbBackend(LoggingBackend):
 
             wandb.watch(model, **kwargs)
         except Exception:
-            # best-effort
+            # Don't swallow: visible trace so users notice when wandb.watch fails.
+            # Returning (vs raising) keeps the trainer alive — wandb.watch is
+            # a diagnostic, not load-bearing — but the failure leaves a record.
+            import logging
+            logging.exception("[WandBBackend] wandb.watch failed")
             return
 
     def finish(self) -> None:
@@ -115,6 +133,7 @@ class WandbBackend(LoggingBackend):
         try:
             self.run.finish()
         except Exception:
-            pass
+            import logging
+            logging.exception("[WandBBackend] run.finish failed")
         finally:
             self.run = None
