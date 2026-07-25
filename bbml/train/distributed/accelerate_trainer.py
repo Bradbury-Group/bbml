@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import time
 import warnings
 from functools import partial
@@ -25,7 +26,7 @@ from tqdm import tqdm
 
 from bbml import logger
 from bbml.core.datamodels import TrainerConfig
-from bbml.core.datapipe import DataPipe
+from bbml.core.datapipe import DataPipe, LoaderContext
 from bbml.core.foundation import Foundation
 from bbml.core.interfaces import Runnable, Trainable
 from bbml.core.trainer import Trainer
@@ -75,9 +76,13 @@ class AccelerateTrainer(Trainer):
         fsdp_transformer_layer_cls: type | None = None,
         fsdp_cpu_offload: bool = False,
         fsdp_use_orig_params: bool = False,
+        prepare_dataloader: bool = True,
     ):
         super().__init__(model, train_config, train_datapipe, val_datapipe, test_datapipe)
 
+        # True: accelerator.prepare(loader) shards; pipe gets a dp_size=1 ctx.
+        # False: pass the real data-parallel ctx and use the loader as returned.
+        self.prepare_dataloader = prepare_dataloader
         self.mixed_precision = mixed_precision
         self.gradient_accumulation_steps = (
             gradient_accumulation_steps
@@ -172,6 +177,33 @@ class AccelerateTrainer(Trainer):
 
         raise ValueError("LRScheduler couldn't be initiated from model or config")
 
+    def _build_loader(self, pipe: DataPipe):
+        """Build a loader honoring ``prepare_dataloader``.
+
+        True (default): pipe gets a ``dp_size=1`` ctx and accelerate does the
+        sharding via ``prepare``. False: pipe self-shards from the real ctx and
+        the loader is used as returned. Pipes whose ``get_loader`` predates the
+        ctx seam fall back to the legacy call with a ``DeprecationWarning``.
+        """
+        if self.prepare_dataloader:
+            ctx = LoaderContext(dp_size=1)
+        else:
+            ctx = LoaderContext(
+                dp_rank=self.accelerator.process_index,
+                dp_size=self.accelerator.num_processes,
+                seed=self.train_config.seed,
+            )
+        if len(inspect.signature(pipe.get_loader).parameters) >= 1:
+            loader = pipe.get_loader(ctx)
+        else:
+            warnings.warn(
+                "DataPipe.get_loader without a ctx parameter is deprecated; "
+                "add `ctx: LoaderContext | None = None`.",
+                DeprecationWarning,
+            )
+            loader = pipe.get_loader()
+        return self.accelerator.prepare(loader) if self.prepare_dataloader else loader
+
     def train(self) -> None:
         """Main training loop with gradient accumulation support."""
         set_seed(self.train_config.seed, device_specific=True)
@@ -201,6 +233,9 @@ class AccelerateTrainer(Trainer):
         if self.train_config.load_path is not None:
             self.load(self.train_config.load_path)
 
+        # Foundation hook: after load, before the first batch.
+        self.model.on_train_start(self.train_config.step)
+
         grad_clip = getattr(self.train_config, "grad_clip_norm", None)
 
         for epoch in range(self.train_config.train_epochs):
@@ -209,7 +244,7 @@ class AccelerateTrainer(Trainer):
                 self._print(f"[AccelerateTrainer] Setting epoch={epoch} on train_datapipe")
                 self.train_datapipe.set_epoch(epoch)
 
-            dataloader = self.accelerator.prepare(self.train_datapipe.get_loader())
+            dataloader = self._build_loader(self.train_datapipe)
             total_batches = len(dataloader)
 
             self._print(f"[AccelerateTrainer] Epoch {epoch + 1}/{self.train_config.train_epochs}")
@@ -256,6 +291,8 @@ class AccelerateTrainer(Trainer):
 
                     self.optimizer.step()
                     self.lr_scheduler.step()
+                    # Foundation hook: immediately after optimizer + scheduler step.
+                    self.model.on_optimizer_step(self.train_config.step)
                     self.optimizer.zero_grad(set_to_none=True)
 
                     optim_step_time = time.perf_counter() - optim_step_start
@@ -305,7 +342,7 @@ class AccelerateTrainer(Trainer):
             return torch.tensor(0.0)
 
         self.wrapped_model.eval()
-        val_dataloader = self.accelerator.prepare(self.val_datapipe.get_loader())
+        val_dataloader = self._build_loader(self.val_datapipe)
 
         total_loss = torch.tensor(0.0, device=self.accelerator.device)
         total_metrics: dict[str, torch.Tensor] = {}
@@ -359,7 +396,7 @@ class AccelerateTrainer(Trainer):
             return
 
         self.wrapped_model.eval()
-        test_dataloader = self.accelerator.prepare(self.test_datapipe.get_loader())
+        test_dataloader = self._build_loader(self.test_datapipe)
 
         local_inputs: list[dict] = []
         local_outputs: list[dict] = []

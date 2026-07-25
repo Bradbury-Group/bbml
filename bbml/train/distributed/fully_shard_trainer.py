@@ -16,10 +16,11 @@ Load-bearing ordering invariants:
 """
 from __future__ import annotations
 
+import inspect
 import time
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import torch
 import torch.distributed as dist
@@ -29,16 +30,11 @@ from tqdm import tqdm
 
 from bbml import logger
 from bbml.core.datamodels.configs import TrainerConfig
-from bbml.core.datapipe import DataPipe
+from bbml.core.datapipe import DataPipe, LoaderContext
 from bbml.core.foundation import Foundation
 from bbml.core.interfaces import Trainable
 from bbml.core.trainer import Trainer
 from bbml.fsdp.dcp import (
-    dcp_load,
-    dcp_load_lora,
-    dcp_load_model_only,
-    dcp_save,
-    dcp_save_lora,
     dcp_save_model_only,
     rotate_keep_last,
 )
@@ -216,28 +212,36 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
         return mesh, layout
 
     def _wrap_train_dataloader(self) -> DataLoader:
-        """Wrap the train datapipe's underlying dataset with a ``DistributedSampler``.
+        """Build the train loader with a data-parallel ``LoaderContext`` derived
+        from the layout.
 
-        ``DataPipe.get_loader`` is bypassed for the sampler-wired loader; we
-        re-use the pipe's ``collate_fn`` / ``batch_size`` / ``num_workers``
-        attributes so the same transforms apply. ``drop_last`` comes from
-        ``train_config.drop_last_train`` (default True); set False for small
-        datasets where the dropped tail meaningfully reduces coverage.
+        A pipe exposing a ctx-accepting ``get_loader`` (``bbml`` ``DataPipe``)
+        owns its own sharding. A plain dataset that only duck-types
+        ``batch_size`` / ``collate_fn`` / ``num_workers`` / ``shuffle`` falls
+        back to the legacy ``DistributedSampler`` wrap. ``drop_last`` comes from
+        ``train_config.drop_last_train`` (default True).
         """
         if self.layout is None:
             raise RuntimeError("layout not initialised; called _wrap_train_dataloader too early")
-        dp_size = self.layout.get_dp_size()
-        dp_rank = self.layout.get_dp_rank()
-        drop_last = bool(getattr(self.train_config, "drop_last_train", True))
+        ctx = LoaderContext(
+            dp_rank=self.layout.get_dp_rank(),
+            dp_size=self.layout.get_dp_size(),
+            seed=self._seed,
+            drop_last=bool(getattr(self.train_config, "drop_last_train", True)),
+        )
+        get_loader = getattr(self.train_datapipe, "get_loader", None)
+        if get_loader is not None and len(inspect.signature(get_loader).parameters) >= 1:
+            return get_loader(ctx)
+
+        # Legacy: plain dataset (no ctx-aware get_loader) -> build directly.
         sampler = DistributedSampler(
             self.train_datapipe,
-            num_replicas=dp_size,
-            rank=dp_rank,
+            num_replicas=ctx.dp_size,
+            rank=ctx.dp_rank,
             shuffle=getattr(self.train_datapipe, "shuffle", True),
-            drop_last=drop_last,
+            drop_last=ctx.drop_last,
             seed=self._seed,
         )
-        self._train_sampler = sampler
         return DataLoader(
             self.train_datapipe,
             batch_size=self.train_datapipe.batch_size,
@@ -320,85 +324,172 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
         metrics_cfg = self._metrics_cfg()
         ckpt_cfg = self._ckpt_cfg()
 
-        for epoch in range(self.train_config.train_epochs):
-            self._train_sampler.set_epoch(epoch)
-            if hasattr(self.train_datapipe, "set_epoch"):
-                self.train_datapipe.set_epoch(epoch)
+        # Foundation hook: after load, before the first batch.
+        self.model.on_train_start(self.train_config.step)
 
+        accum = max(1, int(getattr(self.train_config, "gradient_accumulation_steps", 1) or 1))
+        max_steps = self.train_config.max_training_steps
+        if max_steps is not None:
+            # Step-driven: cycle the loader (set_epoch on wrap) until max_steps.
             pbar = tqdm(
-                enumerate(train_loader),
-                total=len(train_loader),
-                desc=f"Epoch {epoch + 1}",
-                disable=not is_master(),
+                total=max_steps, initial=self.train_config.step,
+                desc="Steps", disable=not is_master(),
             )
-
-            for batch_num, batch in pbar:
-                step_start = time.perf_counter()
-                self.optimizer.zero_grad(set_to_none=True)
-
-                batch["_bbml"] = {
-                    "step": self.train_config.step,
-                    "batch_num": batch_num,
-                    "epoch": epoch,
-                    "split": "train",
-                }
-
-                result = self.model(batch)
-                if isinstance(result, tuple):
-                    loss, extra_metrics = result
-                else:
-                    loss, extra_metrics = result, {}
-
-                loss.backward()
-
-                if grad_clip is not None:
-                    params = [p for p in self.model.parameters() if p.requires_grad]
-                    clip_grad_norm_fsdp(params, grad_clip)
-
-                self.optimizer.step()
-                self.lr_scheduler.step()
-
-                step_time = time.perf_counter() - step_start
-
-                # Reduce loss for logging
-                reduced_loss = loss.detach()
-                if is_distributed():
-                    dist.all_reduce(reduced_loss, op=dist.ReduceOp.AVG)
-
-                self._log_train_step(
-                    reduced_loss=reduced_loss,
-                    extra_metrics=extra_metrics,
-                    step_time=step_time,
-                    batch_num=batch_num,
-                    epoch=epoch,
-                    metrics_cfg=metrics_cfg,
-                    batch=batch,
+            if accum == 1:
+                for epoch, batch_num, batch in self.run_steps(train_loader, self.train_config.step, max_steps):
+                    self._train_batch(batch, batch_num, epoch, grad_clip, metrics_cfg)
+                    self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg)
+                    self.train_config.step += 1
+                    if is_master():
+                        pbar.update(1)
+            else:
+                # Gradient accumulation: `accum` micro-batches per optimizer step.
+                # run_steps drives an unbounded micro stream (max_steps=None);
+                # the while-loop bounds by OPTIMIZER steps. step counts optimizer
+                # steps, so sampling/save cadence + max_steps are in optimizer
+                # steps, not micro-steps.
+                micro_iter = self.run_steps(train_loader, 0, None)
+                while self.train_config.step < max_steps:
+                    self._train_batch_accum(micro_iter, accum, grad_clip, metrics_cfg)
+                    self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg)
+                    self.train_config.step += 1
+                    if is_master():
+                        pbar.update(1)
+            master_print(f"[FullyShardTrainer] reached max_training_steps={max_steps}")
+        else:
+            # Pure epoch mode (unchanged).
+            for epoch in range(self.train_config.train_epochs):
+                self._set_loader_epoch(train_loader, epoch)
+                pbar = tqdm(
+                    enumerate(train_loader),
+                    total=len(train_loader),
+                    desc=f"Epoch {epoch + 1}",
+                    disable=not is_master(),
                 )
-
-                if is_master():
-                    pbar.set_postfix({"loss": float(reduced_loss.item())})
-
-                self._do_val_test_save(
-                    sampling_cfg=sampling_cfg,
-                    ckpt_cfg=ckpt_cfg,
-                )
-
-                self.train_config.step += 1
-                if (
-                    self.train_config.max_training_steps is not None
-                    and self.train_config.step >= self.train_config.max_training_steps
-                ):
-                    master_print(
-                        f"[FullyShardTrainer] reached max_training_steps={self.train_config.max_training_steps}"
-                    )
-                    self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg, do_all=True)
-                    if self._owns_pg:
-                        cleanup_dist()
-                    return
+                for batch_num, batch in pbar:
+                    self._train_batch(batch, batch_num, epoch, grad_clip, metrics_cfg)
+                    self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg)
+                    self.train_config.step += 1
 
         self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg, do_all=True)
         if self._owns_pg:
             cleanup_dist()
+
+    def _train_batch(
+        self,
+        batch: dict[str, Any],
+        batch_num: int,
+        epoch: int,
+        grad_clip: float | None,
+        metrics_cfg: dict[str, Any],
+    ) -> None:
+        """One forward/backward/optimizer step + logging (loop-agnostic body)."""
+        step_start = time.perf_counter()
+        self.optimizer.zero_grad(set_to_none=True)
+
+        batch["_bbml"] = {
+            "step": self.train_config.step,
+            "batch_num": batch_num,
+            "epoch": epoch,
+            "split": "train",
+        }
+
+        result = self.model(batch)
+        if isinstance(result, tuple):
+            loss, extra_metrics = result
+        else:
+            loss, extra_metrics = result, {}
+
+        loss.backward()
+
+        if grad_clip is not None:
+            params = [p for p in self.model.parameters() if p.requires_grad]
+            clip_grad_norm_fsdp(params, grad_clip)
+
+        self.optimizer.step()
+        self.lr_scheduler.step()
+        # Foundation hook: immediately after optimizer + scheduler step (EMA).
+        self.model.on_optimizer_step(self.train_config.step)
+
+        step_time = time.perf_counter() - step_start
+
+        # Reduce loss for logging
+        reduced_loss = loss.detach()
+        if is_distributed():
+            dist.all_reduce(reduced_loss, op=dist.ReduceOp.AVG)
+
+        self._log_train_step(
+            reduced_loss=reduced_loss,
+            extra_metrics=extra_metrics,
+            step_time=step_time,
+            batch_num=batch_num,
+            epoch=epoch,
+            metrics_cfg=metrics_cfg,
+            batch=batch,
+        )
+
+    def _train_batch_accum(
+        self,
+        micro_iter: Iterator[tuple[int, int, Any]],
+        accum: int,
+        grad_clip: float | None,
+        metrics_cfg: dict[str, Any],
+    ) -> None:
+        """One optimizer step over `accum` micro-batches (gradient accumulation).
+
+        Each micro backward scales the loss by 1/accum and reduce-scatters into
+        the sharded ``.grad`` (FSDP default sync ON → grads accumulate in-place,
+        no unsharded-grad hold), so the optimizer sees the mean grad over the
+        full accum*per_device*dp global batch at per-micro peak memory. Logs
+        once per optimizer step with the accum-mean loss + accum-mean scalar
+        extras. Per-sample tensors (loss buckets) are not aggregated here.
+        """
+        step_start = time.perf_counter()
+        self.optimizer.zero_grad(set_to_none=True)
+        losses: list[torch.Tensor] = []
+        extras_sum: dict[str, float] = {}
+        last_epoch = last_batch_num = 0
+        last_batch: dict[str, Any] = {}
+        for _ in range(accum):
+            epoch, batch_num, batch = next(micro_iter)
+            batch["_bbml"] = {
+                "step": self.train_config.step,
+                "batch_num": batch_num,
+                "epoch": epoch,
+                "split": "train",
+            }
+            result = self.model(batch)
+            if isinstance(result, tuple):
+                loss, extra_metrics = result
+            else:
+                loss, extra_metrics = result, {}
+            (loss / accum).backward()
+            losses.append(loss.detach())
+            for k, v in extra_metrics.items():
+                if isinstance(v, (int, float)):
+                    extras_sum[k] = extras_sum.get(k, 0.0) + float(v) / accum
+            last_epoch, last_batch_num, last_batch = epoch, batch_num, batch
+
+        if grad_clip is not None:
+            params = [p for p in self.model.parameters() if p.requires_grad]
+            clip_grad_norm_fsdp(params, grad_clip)
+        self.optimizer.step()
+        self.lr_scheduler.step()
+        self.model.on_optimizer_step(self.train_config.step)
+
+        step_time = time.perf_counter() - step_start
+        reduced_loss = torch.stack(losses).mean()
+        if is_distributed():
+            dist.all_reduce(reduced_loss, op=dist.ReduceOp.AVG)
+        self._log_train_step(
+            reduced_loss=reduced_loss,
+            extra_metrics=extras_sum,
+            step_time=step_time,
+            batch_num=last_batch_num,
+            epoch=last_epoch,
+            metrics_cfg=metrics_cfg,
+            batch=last_batch,
+        )
 
     def _log_train_step(
         self,
@@ -532,64 +623,30 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
     # save / load
     # ------------------------------------------------------------------ #
     def save(self, save_path: str | Path) -> None:
-        """Save checkpoint via the configured DCP format.
+        """Save a resumable checkpoint via ``Foundation.save_training_state``.
 
-        Layout: ``{save_path}/{run_name}/step_{step}/`` (matches the
-        accelerate trainer convention).
+        The format branches (delta / dcp / dcp_lora) live in the Foundation
+        default; the trainer owns only the path layout
+        (``{save_path}/{run_name}/step_{step}/``) and rotation.
         """
         save_path = Path(save_path)
         run_name = self.train_config.name or "unnamed"
         step = self.train_config.step
         ckpt_dir = save_path / run_name / f"step_{step}"
-        ckpt_cfg = self._ckpt_cfg()
-        fmt = ckpt_cfg.get("format", "delta")
-
         metadata = self._build_save_metadata(step)
 
-        if fmt == "delta":
-            # Legacy delta path (Foundation.save). FSDP-aware via the wrap:
-            # full_tensor() gather happens inside Foundation.save's state_dict
-            # iteration. Master-only write.
-            if is_master():
-                ckpt_dir.mkdir(parents=True, exist_ok=True)
-                self.model.save(ckpt_dir)
-                torch.save(self.optimizer.state_dict(), ckpt_dir / "optimizer.pt")
-                torch.save(self.lr_scheduler.state_dict(), ckpt_dir / "lr_scheduler.pt")
-            if dist.is_available() and dist.is_initialized():
-                dist.barrier()
-        elif fmt == "dcp":
-            dcp_save(
-                self.model,
-                self.optimizer,
-                self.lr_scheduler,
-                ckpt_path=ckpt_dir,
-                metadata=metadata,
-            )
-        elif fmt == "dcp_lora":
-            dcp_save_lora(
-                self.model,
-                self.optimizer,
-                self.lr_scheduler,
-                ckpt_path=ckpt_dir,
-                metadata=metadata,
-            )
-        elif fmt == "dcp_model_only":
-            raise ValueError(
-                "checkpointing.format='dcp_model_only' is load-only. "
-                "Model-only snapshots are written via the model_only_every cadence "
-                "(internal call to dcp_save_model_only). Pair this format with a "
-                "full save format (e.g. 'dcp' or 'dcp_lora') for the main save trigger."
-            )
-        else:
-            raise ValueError(f"unknown checkpointing.format: {fmt!r}")
+        self.model.save_training_state(
+            ckpt_dir, self.optimizer, self.lr_scheduler, metadata=metadata
+        )
 
+        ckpt_cfg = self._ckpt_cfg()
         keep_last = ckpt_cfg.get("keep_last")
         if keep_last is not None and keep_last > 0:
             rotate_keep_last(
                 save_path / run_name,
                 keep_last=int(keep_last),
                 strip_heavy=bool(ckpt_cfg.get("rotate_strip_heavy", False)),
-                is_lora=(fmt == "dcp_lora"),
+                is_lora=(ckpt_cfg.get("format", "delta") == "dcp_lora"),
             )
 
         master_print(f"[FullyShardTrainer] saved checkpoint to {ckpt_dir}")
@@ -614,39 +671,9 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
         }
 
     def load(self, load_path: str | Path) -> None:
-        load_path = Path(load_path)
-        ckpt_cfg = self._ckpt_cfg()
-        fmt = ckpt_cfg.get("format", "delta")
-
-        if fmt == "delta":
-            self.model.load(load_path)
-            optim_path = load_path / "optimizer.pt"
-            if optim_path.exists():
-                self.optimizer.load_state_dict(
-                    torch.load(optim_path, map_location=self.device, weights_only=True)
-                )
-            lrs_path = load_path / "lr_scheduler.pt"
-            if lrs_path.exists():
-                self.lr_scheduler.load_state_dict(torch.load(lrs_path, weights_only=True))
-        elif fmt == "dcp":
-            dcp_load(
-                self.model,
-                self.optimizer,
-                self.lr_scheduler,
-                ckpt_path=load_path,
-            )
-        elif fmt == "dcp_lora":
-            dcp_load_lora(
-                self.model,
-                self.optimizer,
-                self.lr_scheduler,
-                ckpt_path=load_path,
-            )
-        elif fmt == "dcp_model_only":
-            dcp_load_model_only(self.model, ckpt_path=load_path)
-        else:
-            raise ValueError(f"unknown checkpointing.format: {fmt!r}")
-
+        """Load a resumable checkpoint via ``Foundation.load_training_state``
+        (format branches collapsed into the Foundation default)."""
+        self.model.load_training_state(Path(load_path), self.optimizer, self.lr_scheduler)
         master_print(f"[FullyShardTrainer] loaded checkpoint from {load_path}")
 
     # ------------------------------------------------------------------ #

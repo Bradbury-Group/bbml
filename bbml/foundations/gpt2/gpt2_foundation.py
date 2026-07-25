@@ -97,6 +97,10 @@ class GPT2Foundation(Foundation):
 
         return optim_groups
 
+    def fsdp_blocks(self):
+        """Transformer blocks sharded by the default Foundation.parallelise()."""
+        return self.model.transformer.h
+
     @property
     def data_transforms(self) -> dict[str, DataTransform]:
         return {"text": GPT2TextDataTransform(block_size=self.config.block_size)}

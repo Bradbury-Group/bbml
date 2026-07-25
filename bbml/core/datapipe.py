@@ -1,11 +1,27 @@
 from collections import defaultdict
+from dataclasses import dataclass
 import enum
 import random
 from typing import Any, Iterable, Literal, Sequence
-from torch.utils.data import DataLoader, Dataset, Sampler
+from torch.utils.data import DataLoader, Dataset, DistributedSampler, Sampler
 
 from bbml.debug import fprint
 from bbml.core.data_transform import DataTransform
+
+
+@dataclass
+class LoaderContext:
+    """Data-parallel context a trainer hands to ``DataPipe.get_loader``.
+
+    ``dp_size > 1`` asks the pipe to shard itself across data-parallel ranks.
+    Defaults describe the single-process case (current behavior).
+    """
+
+    dp_rank: int = 0
+    dp_size: int = 1
+    seed: int = 0
+    epoch: int = 0
+    drop_last: bool = True
 
 
 class CombineMethods(str, enum.Enum):
@@ -298,7 +314,27 @@ class DataPipe(CombinedDataset):
         combined_splits = super().split(*ratios, seed=seed)
         return [self._clone_from_combined(c, **overrides) for c in combined_splits]
 
-    def get_loader(self) -> DataLoader:
+    def get_loader(self, ctx: LoaderContext | None = None) -> DataLoader:
+        """Build the DataLoader. ``ctx.dp_size > 1`` wraps self in a
+        ``DistributedSampler`` (data-parallel sharding); otherwise the loader
+        is the single-process one (current behavior). A pipe that self-shards
+        overrides this and consumes ``ctx`` itself."""
+        if ctx is not None and ctx.dp_size > 1:
+            sampler = DistributedSampler(
+                self,
+                num_replicas=ctx.dp_size,
+                rank=ctx.dp_rank,
+                shuffle=self.shuffle,
+                drop_last=ctx.drop_last,
+                seed=ctx.seed,
+            )
+            return DataLoader(
+                self,
+                batch_size=self.batch_size,
+                sampler=sampler,
+                collate_fn=self.collate_fn,
+                num_workers=self.num_workers or 0,
+            )
         return DataLoader(
             self,
             collate_fn=self.collate_fn,

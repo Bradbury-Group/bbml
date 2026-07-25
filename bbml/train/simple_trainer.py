@@ -124,6 +124,9 @@ class SimpleTrainer(Trainer):
 
         dataloader = self.train_datapipe.get_loader()
 
+        # Foundation hook: after load, before the first batch.
+        self.model.on_train_start(self.train_config.step)
+
         total_steps = self.train_config.train_epochs * len(dataloader)
         pbar_total = tqdm(total=total_steps, desc="Total Steps", position=0)
         for epoch in range(self.train_config.train_epochs):
@@ -162,6 +165,8 @@ class SimpleTrainer(Trainer):
                     clip_grad_norm_(self.model.parameters(), grad_clip)
                 optimizer.step()
                 lr_scheduler.step()
+                # Foundation hook: immediately after optimizer + scheduler step.
+                self.model.on_optimizer_step(self.train_config.step)
 
                 learning_rates = {f"lr.{i}": lr for i, lr in enumerate(lr_scheduler.get_last_lr())}
                 log_metrics = {
@@ -299,18 +304,7 @@ class SimpleTrainer(Trainer):
 
 
     def save(self, save_path: str | Path):
-        self.model.save(save_path)
-        optim_path = Path(save_path) / "optimizer.pt"
-        torch.save(self.optimizer.state_dict(), optim_path)
-        lrs_path = Path(save_path) / "lr_scheduler.pt"
-        torch.save(self.lr_scheduler.state_dict(), lrs_path)
-
+        self.model.save_training_state(save_path, self.optimizer, self.lr_scheduler)
 
     def load(self, load_path: str | Path):
-        self.model.load(load_path)
-        optim_path = Path(load_path) / "optimizer.pt"
-        if optim_path.exists():
-            self.optimizer.load_state_dict(torch.load(optim_path, weights_only=True))
-        lrs_path = Path(load_path) / "lr_scheduler.pt"
-        if lrs_path.exists():
-            self.lr_scheduler.load_state_dict(torch.load(lrs_path, weights_only=True))
+        self.model.load_training_state(load_path, self.optimizer, self.lr_scheduler)
