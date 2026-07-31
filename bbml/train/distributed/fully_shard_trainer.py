@@ -22,11 +22,32 @@ import warnings
 from pathlib import Path
 from typing import Any, Iterator
 
+import sys
+
 import torch
 import torch.distributed as dist
 from torch.distributed.fsdp import MixedPrecisionPolicy
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
+
+
+class _LogFriendlyStream:
+    """Wraps a stream and turns tqdm's `\\r` refresh into `\\n` -- log
+    collectors (kubectl logs, kqlogs) read line-buffered stdout and never
+    surface carriage-return-only updates, so a bare tqdm bar looks silent
+    there even while it's refreshing fine on a real terminal."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, s: str) -> None:
+        self._stream.write(s.replace("\r", "\n"))
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+
+_TQDM_LOG_FILE = _LogFriendlyStream(sys.stdout)
 
 from bbml import logger
 from bbml.core.datamodels.configs import TrainerConfig
@@ -329,16 +350,31 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
 
         accum = max(1, int(getattr(self.train_config, "gradient_accumulation_steps", 1) or 1))
         max_steps = self.train_config.max_training_steps
+        # `step` isn't incremented until AFTER _do_val_test_save below, so the
+        # loop's first iteration checks cadence triggers against whatever step
+        # we STARTED at. On a resume that's the step we just loaded from -- if
+        # that step's save+sample already ran (and, per the historical
+        # save+sample-coincide hang this guards against, crashed) in a PRIOR
+        # process, re-running it every restart re-enters the exact same
+        # collective and never advances: crash -> resume at N -> re-trigger
+        # save+sample at N -> crash -> resume at N -> ... forever stuck at N.
+        # Skip it exactly once, only when resuming (step>0 at start) -- a
+        # fresh run's step-0 firing (e.g. a baseline preview before any
+        # training) is intentional and untouched.
+        skip_first_val_test_save = self.train_config.step > 0
         if max_steps is not None:
             # Step-driven: cycle the loader (set_epoch on wrap) until max_steps.
             pbar = tqdm(
                 total=max_steps, initial=self.train_config.step,
-                desc="Steps", disable=not is_master(),
+                desc="Steps", disable=not is_master(), file=_TQDM_LOG_FILE,
             )
             if accum == 1:
                 for epoch, batch_num, batch in self.run_steps(train_loader, self.train_config.step, max_steps):
                     self._train_batch(batch, batch_num, epoch, grad_clip, metrics_cfg)
-                    self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg)
+                    if skip_first_val_test_save:
+                        skip_first_val_test_save = False
+                    else:
+                        self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg)
                     self.train_config.step += 1
                     if is_master():
                         pbar.update(1)
@@ -351,7 +387,10 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
                 micro_iter = self.run_steps(train_loader, 0, None)
                 while self.train_config.step < max_steps:
                     self._train_batch_accum(micro_iter, accum, grad_clip, metrics_cfg)
-                    self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg)
+                    if skip_first_val_test_save:
+                        skip_first_val_test_save = False
+                    else:
+                        self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg)
                     self.train_config.step += 1
                     if is_master():
                         pbar.update(1)
@@ -364,11 +403,14 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
                     enumerate(train_loader),
                     total=len(train_loader),
                     desc=f"Epoch {epoch + 1}",
-                    disable=not is_master(),
+                    disable=not is_master(), file=_TQDM_LOG_FILE,
                 )
                 for batch_num, batch in pbar:
                     self._train_batch(batch, batch_num, epoch, grad_clip, metrics_cfg)
-                    self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg)
+                    if skip_first_val_test_save:
+                        skip_first_val_test_save = False
+                    else:
+                        self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg)
                     self.train_config.step += 1
 
         self._do_val_test_save(sampling_cfg=sampling_cfg, ckpt_cfg=ckpt_cfg, do_all=True)
@@ -394,13 +436,34 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
             "split": "train",
         }
 
+        # DIAGNOSTIC (2026-07-30, save+sample-coincidence hang investigation --
+        # see todo.md/drawing repo history): a per-rank, always-on bracket
+        # around forward/backward/optimizer so the NEXT hang's crash-adjacent
+        # log window pins exactly which sub-step stalled, on which rank(s),
+        # with what batch shape and memory -- none of that was visible in any
+        # prior crash's logs. Remove once root-caused.
+        _rank = get_global_rank()
+        _shape = tuple(batch["raster_final"].shape) if "raster_final" in batch else None
+        _t0 = time.perf_counter()
+        print(f"[diag rank{_rank}] step={self.train_config.step} PRE-FORWARD "
+              f"shape={_shape} alloc={torch.cuda.memory_allocated()/1e9:.1f}GB "
+              f"reserved={torch.cuda.memory_reserved()/1e9:.1f}GB t={_t0:.2f}", flush=True)
+
         result = self.model(batch)
         if isinstance(result, tuple):
             loss, extra_metrics = result
         else:
             loss, extra_metrics = result, {}
 
+        print(f"[diag rank{_rank}] step={self.train_config.step} POST-FORWARD "
+              f"dt={time.perf_counter()-_t0:.2f}s alloc={torch.cuda.memory_allocated()/1e9:.1f}GB "
+              f"reserved={torch.cuda.memory_reserved()/1e9:.1f}GB", flush=True)
+
         loss.backward()
+
+        print(f"[diag rank{_rank}] step={self.train_config.step} POST-BACKWARD "
+              f"dt={time.perf_counter()-_t0:.2f}s alloc={torch.cuda.memory_allocated()/1e9:.1f}GB "
+              f"reserved={torch.cuda.memory_reserved()/1e9:.1f}GB", flush=True)
 
         if grad_clip is not None:
             params = [p for p in self.model.parameters() if p.requires_grad]
@@ -410,6 +473,9 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
         self.lr_scheduler.step()
         # Foundation hook: immediately after optimizer + scheduler step (EMA).
         self.model.on_optimizer_step(self.train_config.step)
+
+        print(f"[diag rank{_rank}] step={self.train_config.step} POST-OPTIMIZER "
+              f"dt={time.perf_counter()-_t0:.2f}s", flush=True)
 
         step_time = time.perf_counter() - step_start
 
@@ -580,13 +646,20 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
             self.train_config.check_step_trigger(step, self.train_config.save_step_trigger) or do_all
         )
         if save_trigger_fired:
+            # DIAGNOSTIC (see _train_batch): bracket save() -- all ranks call
+            # save_training_state (collective DCP write) even though only
+            # master does real work in _rotate.
+            print(f"[diag rank{get_global_rank()}] step={step} PRE-SAVE t={time.perf_counter():.2f}", flush=True)
             self.save(self.train_config.output_dir)
+            print(f"[diag rank{get_global_rank()}] step={step} POST-SAVE t={time.perf_counter():.2f}", flush=True)
 
         # In-training sampling on cadence (separate from save cadence).
         if sampling_cfg.get("enabled"):
             every = int(sampling_cfg.get("every", 0))
             if every > 0 and (step % every == 0 or do_all):
+                print(f"[diag rank{get_global_rank()}] step={step} PRE-SAMPLE t={time.perf_counter():.2f}", flush=True)
                 self._maybe_sample(sampling_cfg)
+                print(f"[diag rank{get_global_rank()}] step={step} POST-SAMPLE t={time.perf_counter():.2f}", flush=True)
 
         # Optional model-only DCP snapshot (lightweight, more frequent than full save).
         model_only_every = ckpt_cfg.get("model_only_every")
@@ -709,7 +782,7 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
             total_metrics: dict[str, torch.Tensor] = {}
             total_samples = torch.tensor(0, device=self.device, dtype=torch.long)
 
-            for batch in tqdm(val_loader, desc="Validation", disable=not is_master()):
+            for batch in tqdm(val_loader, desc="Validation", disable=not is_master(), file=_TQDM_LOG_FILE):
                 batch["_bbml"] = {"step": self.train_config.step, "split": "validation"}
                 batch_size = self._infer_batch_size(batch)
                 result = self.model(batch)
