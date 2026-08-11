@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "bbml: A Better Basic Machine Learning Framework"
+authors:
+  - family-names: Bradbury
+    given-names: Rowan
+  - family-names: Zhong
+    given-names: Elea
+repository-code: "https://github.com/Bradbury-Group/bbml"
+license: Apache-2.0
