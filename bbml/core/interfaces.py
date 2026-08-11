@@ -1,14 +1,13 @@
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, TypeVar
-from abc import ABC, abstractmethod
 
+from pydantic import BaseModel
 from torch import Tensor
 from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer, ParamsT
-from pydantic import BaseModel
 
 from bbml.core.data_transform import DataTransform
-
 
 InT = TypeVar("InT", bound=BaseModel)
 OutT = TypeVar("OutT", bound=BaseModel)
@@ -16,7 +15,7 @@ OutT = TypeVar("OutT", bound=BaseModel)
 
 class Trainable(ABC):
     @abstractmethod
-    def single_step(self, batch: dict[str, Any]) -> Tensor:
+    def single_step(self, batch: dict[str, Any]) -> Tensor | tuple[Tensor, dict]:
         ...
 
     @abstractmethod
@@ -55,11 +54,15 @@ class Runnable(ABC):
 
 class Serializable(ABC):
     @abstractmethod
-    def save(self, save_path: str | Path):
+    def save(self, save_path: str | Path, *, state_dict: dict[str, Tensor] | None = None):
         ...
 
     @abstractmethod
-    def load(self, load_path: str | Path):
+    def load(self, load_path: str | Path, *, strict: bool = False):
         ...
 
+    def export_state_dict(self) -> dict[str, Any]:
+        if hasattr(self, "state_dict"):
+            return self.state_dict()
+        raise NotImplementedError("export_state_dict requires state_dict() or override")
 

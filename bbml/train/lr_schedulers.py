@@ -40,6 +40,40 @@ LRSchedulerRegistry.add("MultiplicativeLR", MultiplicativeLR)
 LRSchedulerRegistry.add("LambdaLR", LambdaLR)
 
 
+@LRSchedulerRegistry.register("warmup_stable_decay")
+class WarmupStableDecayScheduler:
+    """WSD (warmup -> stable -> decay) via ``transformers.get_scheduler``.
+
+    Not a real instance: ``__new__`` returns the transformers ``LambdaLR``
+    directly. ``__init__`` mirrors the signature so ``init_cls_from_config``
+    maps ``TrainerConfig`` extras (num_warmup_steps / num_stable_steps /
+    num_decay_steps / num_training_steps).
+    """
+
+    def __init__(self, optimizer, num_warmup_steps: int = 0, num_stable_steps: int = 0,
+                 num_decay_steps: int = 0, num_training_steps: int | None = None,
+                 min_lr_ratio: float = 0.0, last_epoch: int = -1):
+        ...  # signature only; construction happens in __new__
+
+    def __new__(cls, optimizer, num_warmup_steps: int = 0, num_stable_steps: int = 0,
+                num_decay_steps: int = 0, num_training_steps: int | None = None,
+                min_lr_ratio: float = 0.0, last_epoch: int = -1):
+        from transformers import get_scheduler
+        if num_training_steps is None:
+            num_training_steps = num_warmup_steps + num_stable_steps + num_decay_steps
+        return get_scheduler(
+            name="warmup_stable_decay",
+            optimizer=optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps,
+            scheduler_specific_kwargs={
+                "num_stable_steps": num_stable_steps,
+                "num_decay_steps": num_decay_steps,
+                "min_lr_ratio": min_lr_ratio,
+            },
+        )
+
+
 # I am reimplementing this here, so we can include warmup and do any funky stuff like a precomputed lr drop as we need
 def cosine_lr(t, warm, total, base=1e-3, min_frac=0.1):
     if t < warm: return base * (t+1) / warm
@@ -111,6 +145,35 @@ class CosineWarmupMaxHoldScheduler(LRScheduler):
             
             lrs.append(lr)
         
+        return lrs
+
+
+@LRSchedulerRegistry.register("WarmupConstantScheduler")
+class WarmupConstantScheduler(LRScheduler):
+    """Linear warmup followed by constant LR."""
+
+    def __init__(self, optimizer, warmup_steps: int, last_epoch: int = -1):
+        """
+        Args:
+            optimizer: PyTorch optimizer
+            warmup_steps: Number of warmup steps (linear increase from 0 to base LR)
+            last_epoch: Last epoch index (default: -1)
+        """
+        self.warmup_steps = warmup_steps
+        if warmup_steps <= 0:
+            raise ValueError(f"warmup_steps ({warmup_steps}) must be > 0")
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        """Compute learning rate for current step."""
+        step = self.last_epoch + 1
+        lrs = []
+        for base_lr in self.base_lrs:
+            if step < self.warmup_steps:
+                lr = base_lr * (step + 1) / self.warmup_steps
+            else:
+                lr = base_lr
+            lrs.append(lr)
         return lrs
 
 

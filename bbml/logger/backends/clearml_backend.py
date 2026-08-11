@@ -103,8 +103,13 @@ class ClearMLBackend(LoggingBackend):
                 except Exception:
                     pass
 
-            # fallback: ignore and warn
-            warnings.warn(f"Unsupported data type for key {key}: {type(val)} fallback: ignore and warn")
+            # Raise loud — silently dropping a payload that the caller explicitly
+            # logged is a bug-class. If a new shape is needed, add a branch
+            # above. The warn-and-ignore fallback was retired 2026-05-26.
+            raise TypeError(
+                f"ClearMLBackend.log: unsupported payload for key {key!r}: type={type(val)!r}. "
+                f"Add a branch in ClearMLBackend.log() to handle this type."
+            )
 
     def finish(self) -> None:
         if self.task is None:
@@ -112,7 +117,8 @@ class ClearMLBackend(LoggingBackend):
         try:
             self.task.close()
         except Exception:
-            pass
+            import logging
+            logging.exception("[ClearMLBackend] task.close failed")
         finally:
             self.task = None
             self.logger = None
