@@ -466,8 +466,18 @@ class FullyShardTrainer(Trainer, MetricsMixin, SamplingMixin):
               f"reserved={torch.cuda.memory_reserved()/1e9:.1f}GB", flush=True)
 
         if grad_clip is not None:
+            # DIAGNOSTIC (2026-08-06, Qwen3.6 backward-prefetch hang
+            # investigation): the gap between POST-BACKWARD and POST-OPTIMIZER
+            # previously had no timestamp of its own -- clip_grad_norm_fsdp
+            # (an all_reduce, per its stack trace in the crash dump) could
+            # hang for the full watchdog timeout with nothing printed in
+            # between. Remove once root-caused.
+            print(f"[diag rank{_rank}] step={self.train_config.step} PRE-CLIP "
+                  f"dt={time.perf_counter()-_t0:.2f}s", flush=True)
             params = [p for p in self.model.parameters() if p.requires_grad]
             clip_grad_norm_fsdp(params, grad_clip)
+            print(f"[diag rank{_rank}] step={self.train_config.step} POST-CLIP "
+                  f"dt={time.perf_counter()-_t0:.2f}s", flush=True)
 
         self.optimizer.step()
         self.lr_scheduler.step()

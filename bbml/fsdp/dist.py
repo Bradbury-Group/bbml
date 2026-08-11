@@ -193,11 +193,47 @@ def checkpoint_wrap(blk: nn.Module) -> nn.Module:
 def _get_total_norm_fsdp(
     params: list[nn.Parameter], foreach: bool = False
 ) -> torch.Tensor:
-    """Compute total grad norm; gather DTensor shards to full norm."""
-    norm = torch.nn.utils.get_total_norm(params, foreach=foreach)
-    if hasattr(norm, "full_tensor"):
-        return norm.full_tensor()
-    return norm
+    """Compute total grad norm across FSDP shards via exactly ONE all_reduce
+    per rank -- NOT ``torch.nn.utils.get_total_norm``, whose DTensor dispatch
+    can issue a variable, tensor-count-dependent NUMBER of collectives (one
+    per distinct op/mesh-redistribution it needs). Confirmed by a real hang
+    on 2-GPU FSDP2 (Qwen3.6-35B-A3B MoE + LoRA, 2026-08-06): if the two ranks'
+    locally-participating gradient tensors ever differ in a way that changes
+    that op-dispatch count, the ranks' collective sequences permanently
+    desync -- each blocks on a DIFFERENT call the other side never issues
+    (confirmed via crash dumps: one rank stuck in a backward-prefetch
+    all_gather, the other in this function's own all_reduce). NOT reproduced
+    in an isolated repro at any scale tried (real 40-layer/256-expert config,
+    matching asymmetric sequence lengths, random weights) -- likely needs
+    real pretrained weights or real data to trigger the exact op-count
+    divergence, so this sidesteps the whole risk class rather than chasing
+    the precise trigger.
+
+    Every rank always contributes exactly one local sum-of-squares tensor and
+    calls all_reduce exactly once, regardless of which/how many gradients it
+    holds locally -- the previous filter (``if p.grad is not None``) could
+    legitimately differ in length/content across ranks; with this
+    implementation that no longer matters, since it never turns into a
+    per-tensor collective.
+
+    DTensor placement-aware: a Shard()'d gradient's local shard is a UNIQUE
+    slice (summed as-is); a Replicate()'d one is the SAME full tensor on
+    every rank sharing that mesh dim (divided by the replica count first, so
+    the cross-rank SUM below counts each real element exactly once).
+    """
+    local_sq_sum = torch.zeros((), device="cuda", dtype=torch.float32)
+    for g in params:
+        if isinstance(g, DTensor):
+            local = g.to_local().float()
+            replicate_factor = 1
+            for dim, placement in enumerate(g.placements):
+                if placement.is_replicate():
+                    replicate_factor *= g.device_mesh.size(dim)
+            local_sq_sum += local.pow(2).sum() / replicate_factor
+        else:
+            local_sq_sum += g.float().pow(2).sum()
+    dist.all_reduce(local_sq_sum, op=dist.ReduceOp.SUM)
+    return local_sq_sum.sqrt()
 
 
 @torch.no_grad()
@@ -209,12 +245,38 @@ def clip_grad_norm_fsdp(
     """Clip grad norm across FSDP shards via a collective.
 
     Behaves like ``torch.nn.utils.clip_grad_norm_`` but consults the full
-    (cross-rank) norm via DTensor's ``full_tensor()`` so the clipping factor
-    is consistent on every rank. Returns the total norm as a regular tensor.
+    (cross-rank) norm computed by ``_get_total_norm_fsdp`` (a single,
+    collective-count-stable all_reduce -- see its docstring) so the clipping
+    factor is consistent on every rank. Returns the total norm as a regular
+    tensor.
+
+    Scales each gradient's LOCAL shard in-place directly -- NOT
+    ``torch.nn.utils.clip_grads_with_norm_``. Confirmed by a real hang on
+    2-GPU FSDP2 (Qwen3.6-35B-A3B, 2026-08-06) that recurred immediately after
+    switching `_get_total_norm_fsdp` to a single stable all_reduce: this
+    function's `torch._foreach_mul_` over `_group_tensors_by_device_and_dtype`
+    -grouped DTensor gradients, scaled against a plain (non-DTensor)
+    `clip_coef_clamped`, dispatches through DTensor's op-strategy machinery --
+    the exact mechanism that made it collective-count-unstable is NOT
+    confirmed (a direct check found every gradient here, even the tiny
+    32-row linear-attention gate projections, sharded identically as
+    `Shard(dim=0)` -- ruling out a mixed Shard/Replicate batch as the cause),
+    but the failure mode is the same risk CLASS `_get_total_norm_fsdp` was
+    rewritten to avoid, one function downstream. A plain scalar times a
+    LOCAL shard is mathematically communication-free regardless of
+    placement, so operating on `.to_local()` directly sidesteps DTensor's op
+    dispatch entirely, closing off the whole class rather than the exact
+    mechanism -- every rank does exactly zero additional collectives here,
+    always.
     """
-    grads = [p.grad for p in parameters if p.grad is not None]
-    total_norm = _get_total_norm_fsdp(grads, foreach=foreach)
-    torch.nn.utils.clip_grads_with_norm_(parameters, max_norm, total_norm, foreach=foreach)
+    total_norm = _get_total_norm_fsdp(
+        [p.grad for p in parameters if p.grad is not None], foreach=foreach)
+    clip_coef = torch.clamp(max_norm / (total_norm + 1e-6), max=1.0)
+    for p in parameters:
+        if p.grad is None:
+            continue
+        local = p.grad.to_local() if isinstance(p.grad, DTensor) else p.grad
+        local.mul_(clip_coef.to(local.device))
     return total_norm
 
 
